@@ -1,0 +1,19 @@
+[project]
+name = "resi-cuecontrol"
+version = "0.1.0"
+description = "Frame-accurate cue control for Resi Central events, built on pyResi."
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "pyresi",
+]
+
+[project.scripts]
+resi-cuecontrol = "resi_cuecontrol:main"
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+pyresi = { git = "https://github.com/pcs3rd/pyResi" }
