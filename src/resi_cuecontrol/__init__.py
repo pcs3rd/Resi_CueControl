@@ -1,18 +1,18 @@
-"""Resi_CueControl — cue control tooling for Resi Central events, built on pyResi.
+"""Resi_CueControl — OSC-driven cue control for Resi Central events, built
+on pyResi.
 
-This is a starting point, not a finished tool: `main()` just authenticates
-and lists the account's channels, as a smoke test that the pyResi dependency
-is wired up correctly. Build the actual cue-placement logic from here — see
-https://github.com/pcs3rd/pyResi for the client this depends on, and note
-that frame-accurate cue placement needs a calibrated delta (measured per
-encoder) before positions can be trusted to the frame; see the project
-README for where that stands.
+`main()` starts an OSC server (see osc_server.py for the three commands it
+understands: read / create / update) against one Resi account,
+authenticated via RESI_TOKEN or RESI_USERNAME/RESI_PASSWORD.
 """
 
+import logging
 import os
 import sys
 
 from pyResi import pyResi
+
+from .osc_server import OSCApp
 
 
 def _client() -> pyResi:
@@ -31,14 +31,16 @@ def _client() -> pyResi:
 
 
 def main() -> None:
+    logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
     client = _client()
-    channels = client.channels.list()
-    if not channels:
-        print("Connected — no channels found on this account.")
-        return
-    print(f"Connected. {len(channels)} channel(s):")
-    for ch in channels:
-        print(f"  - {ch.get('name')} ({ch.get('uuid')})")
+    app = OSCApp(
+        client,
+        listen_host=os.environ.get("OSC_LISTEN_HOST", "0.0.0.0"),
+        listen_port=int(os.environ.get("OSC_LISTEN_PORT", "9000")),
+        reply_host=os.environ.get("OSC_REPLY_HOST", "127.0.0.1"),
+        reply_port=int(os.environ.get("OSC_REPLY_PORT", "9001")),
+    )
+    app.serve_forever()
 
 
 if __name__ == "__main__":
