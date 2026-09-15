@@ -5,22 +5,34 @@ OSC-driven cue control for Resi Central events (`studio.resi.io`), built on
 
 ## What it does
 
-Starts a UDP OSC server (`resi-cuecontrol`) that understands three commands,
-all scoped to whichever encoder's *currently live* event is running:
+Starts a UDP OSC server (`resi-cuecontrol`) that understands four commands.
+The three cue commands are all scoped to whichever encoder's *currently
+live* event is running; `encoders/list` is how you find real `encoder_id`
+values to pass to them:
 
 | Address | Args | Effect |
 |---|---|---|
 | `/resi/cue/read` | `encoder_id` | Lists the live event's cues |
 | `/resi/cue/create` | `encoder_id, name` | Creates a cue at "now", delay-corrected (see below) |
 | `/resi/cue/update` | `encoder_id, cue_id, position_seconds, name` | Moves/renames an existing cue |
+| `/resi/encoders/list` | *(none)* | Lists every encoder on the account |
 
 Every command replies to a fixed target (`OSC_REPLY_HOST`/`OSC_REPLY_PORT`)
 rather than back to the sender — `/resi/cue/entry`, `/resi/cue/read/done`,
-`/resi/cue/created`, `/resi/cue/updated`, or `/resi/cue/error` on failure.
+`/resi/cue/created`, `/resi/cue/updated`, `/resi/encoder/entry` +
+`/resi/encoders/list/done`, or `/resi/cue/error` on failure.
 The address strings and argument order are placeholders: rename them in
 `src/resi_cuecontrol/osc_server.py` to match whatever's actually sending the
 OSC (Companion, a lighting console, etc.) — nothing else depends on the
 exact spelling.
+
+## Finding encoder IDs
+
+Send `/resi/encoders/list` (no args) and you'll get back one
+`/resi/encoder/entry <uuid> <name> <live>` per encoder on the account,
+followed by `/resi/encoders/list/done <count>`. `live` is `True` when that
+encoder currently has an event running — that's the `encoder_id` to use
+with the cue commands above.
 
 ## Why cue creation corrects for delay
 

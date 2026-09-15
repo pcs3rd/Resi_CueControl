@@ -34,10 +34,19 @@ class FakeEventsAPI:
         return 0.0
 
 
+class FakeEncodersAPI:
+    def list(self):
+        return [{"uuid": "enc1", "name": "Main Room"}]
+
+    def status(self, encoder_id):
+        return {"currentEventId": "evt1"}
+
+
 class FakeClient:
     def __init__(self):
         self.events = FakeEventsAPI()
         self.cues = FakeCuesAPI()
+        self.encoders = FakeEncodersAPI()
 
 
 def _collect_replies(port, count, timeout=2.0):
@@ -129,3 +138,34 @@ def test_unknown_encoder_replies_with_error_not_silence():
     addr, args = received[0]
     assert addr == "/resi/cue/error"
     assert args[0] == "enc-offline"
+
+
+def test_encoders_list_round_trip():
+    server, received, stopper = _collect_replies(REPLY_PORT + 2, count=2)
+
+    app = OSCApp(
+        FakeClient(),
+        listen_host="127.0.0.1",
+        listen_port=LISTEN_PORT + 2,
+        reply_host="127.0.0.1",
+        reply_port=REPLY_PORT + 2,
+    )
+    app_thread = threading.Thread(target=app.serve_forever, daemon=True)
+    app_thread.start()
+    time.sleep(0.2)
+
+    client = SimpleUDPClient("127.0.0.1", LISTEN_PORT + 2)
+    client.send_message("/resi/encoders/list", [])
+
+    stopper.join(timeout=3.0)
+    app.server.shutdown()
+
+    addresses = [addr for addr, _ in received]
+    assert "/resi/encoder/entry" in addresses
+    assert "/resi/encoders/list/done" in addresses
+
+    entry = next(args for addr, args in received if addr == "/resi/encoder/entry")
+    assert entry == ("enc1", "Main Room", True)
+
+    done = next(args for addr, args in received if addr == "/resi/encoders/list/done")
+    assert done == (1,)

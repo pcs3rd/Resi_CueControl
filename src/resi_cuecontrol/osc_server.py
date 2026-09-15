@@ -2,9 +2,10 @@
 
 Listens for three commands and translates them into pyResi calls:
 
-    /resi/cue/read   <encoder_id>
-    /resi/cue/create <encoder_id> <name>
-    /resi/cue/update <encoder_id> <cue_id> <position_seconds> <name>
+    /resi/cue/read      <encoder_id>
+    /resi/cue/create    <encoder_id> <name>
+    /resi/cue/update    <encoder_id> <cue_id> <position_seconds> <name>
+    /resi/encoders/list  (no args)
 
 The address strings and argument order here are placeholders — rename them
 to match whatever's actually sending the OSC (Companion, a lighting
@@ -25,7 +26,7 @@ from pythonosc.udp_client import SimpleUDPClient
 
 from pyResi import position_to_seconds
 
-from . import cues
+from . import cues, encoders
 
 log = logging.getLogger('resi_cuecontrol.osc')
 
@@ -46,6 +47,7 @@ class OSCApp:
         dispatcher.map('/resi/cue/read', self._on_read)
         dispatcher.map('/resi/cue/create', self._on_create)
         dispatcher.map('/resi/cue/update', self._on_update)
+        dispatcher.map('/resi/encoders/list', self._on_list_encoders)
         dispatcher.set_default_handler(self._on_unmatched)
 
         self.server = BlockingOSCUDPServer((listen_host, listen_port), dispatcher)
@@ -93,6 +95,18 @@ class OSCApp:
             self._error(encoder_id, str(exc))
             return
         self.reply.send_message('/resi/cue/updated', [encoder_id, cue_id, position, name])
+
+    def _on_list_encoders(self, address):
+        try:
+            entries = encoders.list_encoders(self.client)
+        except Exception as exc:
+            self._error('', str(exc))
+            return
+        for encoder_id, name, live in entries:
+            self.reply.send_message(
+                '/resi/encoder/entry', [encoder_id or '', name or '', live]
+            )
+        self.reply.send_message('/resi/encoders/list/done', [len(entries)])
 
     def _on_unmatched(self, address, *args):
         log.warning('unhandled OSC address %s %r', address, args)
