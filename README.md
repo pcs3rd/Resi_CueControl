@@ -183,6 +183,39 @@ Environment variables, all optional except the Resi credentials:
   (e.g. "it's landing half a second late") once everything else is
   already calibrated — not a measurement, just a fine-tuning knob.
 
+## Running in Docker
+
+```bash
+docker build -t resi-cuecontrol .
+
+docker run --rm \
+  -e RESI_USERNAME=you@yourchurch.org -e RESI_PASSWORD=... \
+  -e OSC_REPLY_HOST=192.168.1.50 \
+  -p 9000:9000/udp -p 9001:9001/udp \
+  resi-cuecontrol
+# or: -e RESI_TOKEN=...
+```
+
+Same environment variables as above, passed with `-e` (or `--env-file`
+for a `.env` of them). Both OSC ports are UDP — `-p HOST:CONTAINER/udp`
+for each, matching whatever `OSC_LISTEN_PORT`/`OSC_REPLY_PORT` you set
+(defaults 9000/9001 if you don't set them).
+
+One thing that trips people up with any containerized OSC/UDP service:
+`OSC_REPLY_HOST`'s default (`127.0.0.1`) means *inside the container* —
+useless once this is containerized, since replies would just loop back to
+itself instead of reaching ProPresenter/Companion/whatever sent the
+command. Set it explicitly to that machine's real address (or
+`host.docker.internal` if it's running on the same Docker host and your
+Docker version resolves that) rather than relying on the default.
+
+The image is a two-stage build (`Dockerfile`): the builder stage needs
+`git` to resolve the `pyresi` git dependency from `uv.lock` and isn't
+present in the final image, which just carries the venv, the source, and
+a non-root user. Rebuild (`docker build`, no cache needed) after bumping
+`uv.lock` per the section below — the image bakes in whatever commit was
+pinned at build time, same as the Nix devShell does.
+
 ## Picking up pyResi changes
 
 `pyresi` is a pinned git dependency, not editable — it won't pick up new
