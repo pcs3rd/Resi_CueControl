@@ -26,9 +26,23 @@ class FakeCuesAPI:
         return True
 
 
+class EventsListMixin:
+    """Adds for_encoder support to FakeEventsAPI for the events/list test."""
+
+    def for_encoder(self, encoder_id):
+        return [
+            {"uuid": "evt1", "name": "Sunday 11am", "startTime": "2026-09-10T14:00:00Z"}
+        ]
+
+
 class FakeEventsAPI(EventsListMixin):
     def current_for_encoder(self, encoder_id):
-        return {"uuid": "evt1", "eventProfileId": "p1", "startTime": "2026-09-10T14:00:00Z"}
+        return {
+            "uuid": "evt1",
+            "eventProfileId": "p1",
+            "name": "Sunday 11am",
+            "startTime": "2026-09-10T14:00:00Z",
+        }
 
     def streaming_delay(self, event):
         return 0.0
@@ -40,15 +54,6 @@ class FakeEncodersAPI:
 
     def status(self, encoder_id):
         return {"currentEventId": "evt1"}
-
-
-class EventsListMixin:
-    """Adds for_encoder support to FakeEventsAPI for the events/list test."""
-
-    def for_encoder(self, encoder_id):
-        return [
-            {"uuid": "evt1", "name": "Sunday 11am", "startTime": "2026-09-10T14:00:00Z"}
-        ]
 
 
 class FakeClient:
