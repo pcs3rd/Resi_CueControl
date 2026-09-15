@@ -87,6 +87,16 @@ def test_create_cue_now_clamps_to_zero_when_delay_exceeds_elapsed():
     assert client.cues.created[-1][2] == "0:00:00.000"
 
 
+def test_create_cue_at_ignores_streaming_delay():
+    # Explicit position, not "now minus delay" — an 8s delay set on the
+    # fake client must have zero effect here.
+    client = FakeClient(EVENT, delay=8.0)
+
+    cues.create_cue_at(client, "enc1", 30.0, "At 30s")
+
+    assert client.cues.created[-1] == ("prof1", "evt1", "0:00:30.000", "At 30s")
+
+
 def test_update_cue_sends_seconds_as_position_string():
     client = FakeClient(EVENT)
 
@@ -104,6 +114,9 @@ def test_encoder_not_live_raises_for_read_create_and_update():
 
     with pytest.raises(cues.EncoderNotLive):
         cues.create_cue_now(client, "enc-offline", "x")
+
+    with pytest.raises(cues.EncoderNotLive):
+        cues.create_cue_at(client, "enc-offline", 0.0, "x")
 
     with pytest.raises(cues.EncoderNotLive):
         cues.update_cue(client, "enc-offline", "c1", 0.0, "x")

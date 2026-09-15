@@ -49,6 +49,20 @@ def create_cue_now(client, encoder_id, name, *, now=None):
     return client.cues.create(event['eventProfileId'], event['uuid'], position, name)
 
 
+def create_cue_at(client, encoder_id, position_seconds, name):
+    """Create a cue at an explicit timeline position (seconds from event
+    start), bypassing create_cue_now's real-time delay correction entirely.
+
+    For testing the create path independent of the delay measurement, or
+    for a caller that already knows the exact timeline position it wants
+    (e.g. replaying a cue sheet) rather than reacting to something
+    happening right now.
+    """
+    event = _live_event(client, encoder_id)
+    position = seconds_to_position(position_seconds)
+    return client.cues.create(event['eventProfileId'], event['uuid'], position, name)
+
+
 def update_cue(client, encoder_id, cue_id, position_seconds, name):
     """Move an existing cue to an absolute position (seconds) and/or rename
     it. Resi's PATCH replaces the whole cue, so both are always sent."""

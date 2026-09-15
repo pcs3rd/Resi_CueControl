@@ -14,6 +14,7 @@ values to pass to them:
 |---|---|---|
 | `/resi/cue/read` | `encoder_id` | Lists the live event's cues |
 | `/resi/cue/create` | `encoder_id, name` | Creates a cue at "now", delay-corrected (see below) |
+| `/resi/cue/create_at` | `encoder_id, position_seconds, name` | Creates a cue at an explicit timeline position — no delay correction |
 | `/resi/cue/update` | `encoder_id, cue_id, position_seconds, name` | Moves/renames an existing cue |
 | `/resi/encoders/list` | *(none)* | Lists every encoder on the account |
 
@@ -33,6 +34,12 @@ Send `/resi/encoders/list` (no args) and you'll get back one
 followed by `/resi/encoders/list/done <count>`. `live` is `True` when that
 encoder currently has an event running — that's the `encoder_id` to use
 with the cue commands above.
+
+`/resi/cue/create_at` is the one to reach for when testing cue creation
+itself — a wrong or unvalidated `streaming_delay()` reading can't put the
+cue somewhere unexpected, since there's no delay math involved at all;
+you give it the exact timeline second you want. Both commands reply on
+the same `/resi/cue/created` address.
 
 ## Why cue creation corrects for delay
 

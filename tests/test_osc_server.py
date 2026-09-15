@@ -71,7 +71,7 @@ def _collect_replies(port, count, timeout=2.0):
 
 
 def test_osc_commands_round_trip():
-    server, received, stopper = _collect_replies(REPLY_PORT, count=4)
+    server, received, stopper = _collect_replies(REPLY_PORT, count=5)
 
     app = OSCApp(
         FakeClient(),
@@ -87,6 +87,7 @@ def test_osc_commands_round_trip():
     client = SimpleUDPClient("127.0.0.1", LISTEN_PORT)
     client.send_message("/resi/cue/read", ["enc1"])
     client.send_message("/resi/cue/create", ["enc1", "NewCue"])
+    client.send_message("/resi/cue/create_at", ["enc1", 30.0, "AtCue"])
     client.send_message("/resi/cue/update", ["enc1", "c1", 42.0, "Renamed"])
 
     stopper.join(timeout=3.0)
@@ -95,11 +96,20 @@ def test_osc_commands_round_trip():
     addresses = [addr for addr, _ in received]
     assert "/resi/cue/entry" in addresses
     assert "/resi/cue/read/done" in addresses
-    assert "/resi/cue/created" in addresses
+    assert addresses.count("/resi/cue/created") == 2
     assert "/resi/cue/updated" in addresses
 
     entry = next(args for addr, args in received if addr == "/resi/cue/entry")
     assert entry == ("enc1", "c1", 5.0, "Start")
+
+    created_names = {args[3] for addr, args in received if addr == "/resi/cue/created"}
+    assert created_names == {"NewCue", "AtCue"}
+
+    at_cue = next(
+        args for addr, args in received
+        if addr == "/resi/cue/created" and args[3] == "AtCue"
+    )
+    assert at_cue[2] == 30.0
 
     updated = next(args for addr, args in received if addr == "/resi/cue/updated")
     assert updated == ("enc1", "c1", "0:00:42.000", "Renamed")

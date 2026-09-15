@@ -4,6 +4,7 @@ Listens for three commands and translates them into pyResi calls:
 
     /resi/cue/read      <encoder_id>
     /resi/cue/create    <encoder_id> <name>
+    /resi/cue/create_at <encoder_id> <position_seconds> <name>
     /resi/cue/update    <encoder_id> <cue_id> <position_seconds> <name>
     /resi/encoders/list  (no args)
 
@@ -46,6 +47,7 @@ class OSCApp:
         dispatcher = Dispatcher()
         dispatcher.map('/resi/cue/read', self._on_read)
         dispatcher.map('/resi/cue/create', self._on_create)
+        dispatcher.map('/resi/cue/create_at', self._on_create_at)
         dispatcher.map('/resi/cue/update', self._on_update)
         dispatcher.map('/resi/encoders/list', self._on_list_encoders)
         dispatcher.set_default_handler(self._on_unmatched)
@@ -77,6 +79,20 @@ class OSCApp:
     def _on_create(self, address, encoder_id, name):
         try:
             cue = cues.create_cue_now(self.client, encoder_id, name)
+        except Exception as exc:
+            self._error(encoder_id, str(exc))
+            return
+        if cue is None:
+            self._error(encoder_id, 'cue created but could not be read back to confirm')
+            return
+        self.reply.send_message(
+            '/resi/cue/created',
+            [encoder_id, cue.get('uuid') or '', position_to_seconds(cue['position']), name],
+        )
+
+    def _on_create_at(self, address, encoder_id, position_seconds, name):
+        try:
+            cue = cues.create_cue_at(self.client, encoder_id, position_seconds, name)
         except Exception as exc:
             self._error(encoder_id, str(exc))
             return
