@@ -26,7 +26,7 @@ class FakeCuesAPI:
         return True
 
 
-class FakeEventsAPI:
+class FakeEventsAPI(EventsListMixin):
     def current_for_encoder(self, encoder_id):
         return {"uuid": "evt1", "eventProfileId": "p1", "startTime": "2026-09-10T14:00:00Z"}
 
@@ -40,6 +40,15 @@ class FakeEncodersAPI:
 
     def status(self, encoder_id):
         return {"currentEventId": "evt1"}
+
+
+class EventsListMixin:
+    """Adds for_encoder support to FakeEventsAPI for the events/list test."""
+
+    def for_encoder(self, encoder_id):
+        return [
+            {"uuid": "evt1", "name": "Sunday 11am", "startTime": "2026-09-10T14:00:00Z"}
+        ]
 
 
 class FakeClient:
@@ -179,3 +188,36 @@ def test_encoders_list_round_trip():
 
     done = next(args for addr, args in received if addr == "/resi/encoders/list/done")
     assert done == (1,)
+
+
+def test_events_list_and_current_round_trip():
+    server, received, stopper = _collect_replies(REPLY_PORT + 3, count=3)
+
+    app = OSCApp(
+        FakeClient(),
+        listen_host="127.0.0.1",
+        listen_port=LISTEN_PORT + 3,
+        reply_host="127.0.0.1",
+        reply_port=REPLY_PORT + 3,
+    )
+    app_thread = threading.Thread(target=app.serve_forever, daemon=True)
+    app_thread.start()
+    time.sleep(0.2)
+
+    client = SimpleUDPClient("127.0.0.1", LISTEN_PORT + 3)
+    client.send_message("/resi/events/list", ["enc1"])
+    client.send_message("/resi/events/current", ["enc1"])
+
+    stopper.join(timeout=3.0)
+    app.server.shutdown()
+
+    addresses = [addr for addr, _ in received]
+    assert "/resi/event/entry" in addresses
+    assert "/resi/events/list/done" in addresses
+    assert "/resi/event/current" in addresses
+
+    entry = next(args for addr, args in received if addr == "/resi/event/entry")
+    assert entry == ("enc1", "evt1", "Sunday 11am", "2026-09-10T14:00:00Z", True)
+
+    current = next(args for addr, args in received if addr == "/resi/event/current")
+    assert current == ("enc1", "evt1", "Sunday 11am", "2026-09-10T14:00:00Z")

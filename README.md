@@ -17,11 +17,14 @@ values to pass to them:
 | `/resi/cue/create_at` | `encoder_id, position_seconds, name` | Creates a cue at an explicit timeline position — no delay correction |
 | `/resi/cue/update` | `encoder_id, cue_id, position_seconds, name` | Moves/renames an existing cue |
 | `/resi/encoders/list` | *(none)* | Lists every encoder on the account |
+| `/resi/events/list` | `encoder_id` | Lists that encoder's events ("videos"), newest first |
+| `/resi/events/current` | `encoder_id` | The encoder's current/active event, if it's live |
 
 Every command replies to a fixed target (`OSC_REPLY_HOST`/`OSC_REPLY_PORT`)
 rather than back to the sender — `/resi/cue/entry`, `/resi/cue/read/done`,
 `/resi/cue/created`, `/resi/cue/updated`, `/resi/encoder/entry` +
-`/resi/encoders/list/done`, or `/resi/cue/error` on failure.
+`/resi/encoders/list/done`, `/resi/event/entry` + `/resi/events/list/done`,
+`/resi/event/current`, or `/resi/cue/error` on failure.
 The address strings and argument order are placeholders: rename them in
 `src/resi_cuecontrol/osc_server.py` to match whatever's actually sending the
 OSC (Companion, a lighting console, etc.) — nothing else depends on the
@@ -40,6 +43,22 @@ itself — a wrong or unvalidated `streaming_delay()` reading can't put the
 cue somewhere unexpected, since there's no delay math involved at all;
 you give it the exact timeline second you want. Both commands reply on
 the same `/resi/cue/created` address.
+
+## Finding events ("videos")
+
+Resi calls a recorded or in-progress broadcast an "event"; Studio's own UI
+calls the same thing a "video" (as in "Encoder Videos") — this project
+uses Resi's own field/endpoint name, "event", throughout.
+
+`/resi/events/list <encoder_id>` replies with one
+`/resi/event/entry <encoder_id> <uuid> <name> <start_time> <active>` per
+event on that encoder (newest first), then
+`/resi/events/list/done <encoder_id> <count>`. `active` is `True` for
+whichever one is that encoder's current live event right now.
+
+`/resi/events/current <encoder_id>` skips straight to that one: replies
+with `/resi/event/current <encoder_id> <uuid> <name> <start_time>`, or
+`/resi/cue/error` if the encoder isn't currently streaming.
 
 ## Why cue creation corrects for delay
 

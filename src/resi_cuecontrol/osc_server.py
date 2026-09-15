@@ -7,6 +7,8 @@ Listens for three commands and translates them into pyResi calls:
     /resi/cue/create_at <encoder_id> <position_seconds> <name>
     /resi/cue/update    <encoder_id> <cue_id> <position_seconds> <name>
     /resi/encoders/list  (no args)
+    /resi/events/list    <encoder_id>
+    /resi/events/current <encoder_id>
 
 The address strings and argument order here are placeholders — rename them
 to match whatever's actually sending the OSC (Companion, a lighting
@@ -27,7 +29,7 @@ from pythonosc.udp_client import SimpleUDPClient
 
 from pyResi import position_to_seconds
 
-from . import cues, encoders
+from . import cues, encoders, events
 
 log = logging.getLogger('resi_cuecontrol.osc')
 
@@ -50,6 +52,8 @@ class OSCApp:
         dispatcher.map('/resi/cue/create_at', self._on_create_at)
         dispatcher.map('/resi/cue/update', self._on_update)
         dispatcher.map('/resi/encoders/list', self._on_list_encoders)
+        dispatcher.map('/resi/events/list', self._on_list_events)
+        dispatcher.map('/resi/events/current', self._on_current_event)
         dispatcher.set_default_handler(self._on_unmatched)
 
         self.server = BlockingOSCUDPServer((listen_host, listen_port), dispatcher)
@@ -123,6 +127,33 @@ class OSCApp:
                 '/resi/encoder/entry', [encoder_id or '', name or '', live]
             )
         self.reply.send_message('/resi/encoders/list/done', [len(entries)])
+
+    def _on_list_events(self, address, encoder_id):
+        try:
+            entries = events.list_events(self.client, encoder_id)
+        except Exception as exc:
+            self._error(encoder_id, str(exc))
+            return
+        for event_id, name, start_time, active in entries:
+            self.reply.send_message(
+                '/resi/event/entry',
+                [encoder_id, event_id or '', name or '', start_time or '', active],
+            )
+        self.reply.send_message('/resi/events/list/done', [encoder_id, len(entries)])
+
+    def _on_current_event(self, address, encoder_id):
+        try:
+            current = events.current_event(self.client, encoder_id)
+        except Exception as exc:
+            self._error(encoder_id, str(exc))
+            return
+        if current is None:
+            self._error(encoder_id, f"encoder {encoder_id!r} isn't currently streaming")
+            return
+        event_id, name, start_time = current
+        self.reply.send_message(
+            '/resi/event/current', [encoder_id, event_id or '', name or '', start_time or '']
+        )
 
     def _on_unmatched(self, address, *args):
         log.warning('unhandled OSC address %s %r', address, args)
