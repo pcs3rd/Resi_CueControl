@@ -35,6 +35,12 @@ component is an estimate (`buffer_segments`, default 3 — see
 cues.create_cue_now()) rather than a measured constant, tunable via
 DECODER_BUFFER_SEGMENTS.
 
+CUE_OFFSET_SECONDS (default 0) is a separate, flat manual nudge applied
+regardless of CORRECT_FOR_DELAY — positive moves every auto-time cue
+earlier, negative moves it later. Use this for small real-world
+adjustments (e.g. "it's landing half a second late") rather than
+recalibrating the delay-correction math itself.
+
 Every command sends a reply to a fixed target (OSC_REPLY_HOST /
 OSC_REPLY_PORT) rather than back to the sender's address, since the usual
 setup here is fixed IPs on both ends. On error, callers get
@@ -65,6 +71,7 @@ class OSCApp:
         reply_port=9001,
         correct_for_delay=False,
         buffer_segments=3,
+        offset_seconds=0.0,
     ):
         self.client = client
         self.reply = SimpleUDPClient(reply_host, reply_port)
@@ -84,6 +91,12 @@ class OSCApp:
         # DECODER_BUFFER_SEGMENTS environment variable rather than editing
         # this default.
         self.buffer_segments = buffer_segments
+        # A flat manual nudge applied to every auto-time cue after
+        # whatever else this computes — positive moves the cue earlier,
+        # negative moves it later. For fine-tuning against real-world
+        # observation once everything else is already calibrated; tune
+        # via the CUE_OFFSET_SECONDS environment variable.
+        self.offset_seconds = offset_seconds
 
         dispatcher = Dispatcher()
         dispatcher.map('/resi/cue/read', self._on_read)
@@ -149,6 +162,7 @@ class OSCApp:
                     private_cue=private_cue,
                     correct_for_delay=self.correct_for_delay,
                     buffer_segments=self.buffer_segments,
+                    offset_seconds=self.offset_seconds,
                 )
             else:
                 cue = cues.create_cue_at(

@@ -177,6 +177,11 @@ Environment variables, all optional except the Resi credentials:
   downstream decoder playback buffering to assume, on top of the measured
   encoder/CDN lag. A rough estimate, not a measured constant for any
   specific decoder — see the calibration note under Testing below.
+- `CUE_OFFSET_SECONDS` (default `0`) — a flat manual nudge applied to
+  every auto-time cue regardless of `CORRECT_FOR_DELAY`: positive moves
+  it earlier, negative moves it later. For small real-world corrections
+  (e.g. "it's landing half a second late") once everything else is
+  already calibrated — not a measurement, just a fine-tuning knob.
 
 ## Picking up pyResi changes
 

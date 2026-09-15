@@ -54,6 +54,11 @@ def main() -> None:
         # decoder actually shows (see README's testing/calibration
         # section) rather than guessing.
         buffer_segments=float(os.environ.get("DECODER_BUFFER_SEGMENTS", "3")),
+        # Flat manual nudge on every auto-time cue, applied regardless of
+        # CORRECT_FOR_DELAY — positive moves it earlier, negative later.
+        # For small real-world corrections once everything else is
+        # already calibrated (see cues.create_cue_now()'s docstring).
+        offset_seconds=float(os.environ.get("CUE_OFFSET_SECONDS", "0")),
     )
     app.serve_forever()
 

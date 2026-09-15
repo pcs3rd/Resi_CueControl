@@ -49,7 +49,7 @@ def read_cues_for_event(client, event_id):
 
 def create_cue_now(
     client, encoder_id, name, *, now=None, private_cue=True,
-    correct_for_delay=False, buffer_segments=3,
+    correct_for_delay=False, buffer_segments=3, offset_seconds=0.0,
 ):
     """Create a cue at the real-world moment this was called (pass `now` to
     override, e.g. in tests).
@@ -63,6 +63,14 @@ def create_cue_now(
     decoder buffer, or both — made the cue land early by very close to
     whatever was subtracted; the streaming/decoder delay this project was
     originally built to correct for just isn't part of that path.
+
+    `offset_seconds` (default 0) is a final, flat manual nudge applied
+    after everything else: a positive value moves the cue earlier (fewer
+    seconds into the event), a negative value moves it later. Unlike
+    `correct_for_delay`, this isn't measuring anything — it's for fine
+    manual adjustment against real-world observation (e.g. "it's still
+    landing half a second late") once the rest of the math has already
+    been calibrated.
 
     Pass `correct_for_delay=True` for the OTHER scenario this project can
     still handle: an operator reacting to something they just watched on
@@ -91,22 +99,22 @@ def create_cue_now(
         encode_delay = client.events.streaming_delay(event)
         buffer_delay = client.events.decoder_buffer_delay(event, buffer_segments)
         delay = encode_delay + buffer_delay
-        target_seconds = max(0.0, elapsed_seconds - delay)
+        target_seconds = max(0.0, elapsed_seconds - delay - offset_seconds)
         position = seconds_to_position(target_seconds)
         log.info(
             "auto time-adjusted cue %r on encoder %s: encode delay %.3fs + "
-            "decoder buffer %.3fs (%s segments) = total delay %.3fs "
-            "(elapsed %.3fs -> position %s)",
-            name, encoder_id, encode_delay, buffer_delay, buffer_segments, delay,
-            elapsed_seconds, position,
+            "decoder buffer %.3fs (%s segments) + manual offset %.3fs = "
+            "total delay %.3fs (elapsed %.3fs -> position %s)",
+            name, encoder_id, encode_delay, buffer_delay, buffer_segments,
+            offset_seconds, delay + offset_seconds, elapsed_seconds, position,
         )
     else:
-        target_seconds = max(0.0, elapsed_seconds)
+        target_seconds = max(0.0, elapsed_seconds - offset_seconds)
         position = seconds_to_position(target_seconds)
         log.info(
-            "auto time cue %r on encoder %s: elapsed %.3fs -> position %s "
-            "(no delay correction)",
-            name, encoder_id, elapsed_seconds, position,
+            "auto time cue %r on encoder %s: elapsed %.3fs, manual offset "
+            "%.3fs -> position %s (no delay correction)",
+            name, encoder_id, elapsed_seconds, offset_seconds, position,
         )
 
     return client.cues.create(

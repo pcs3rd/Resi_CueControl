@@ -101,6 +101,38 @@ def test_create_cue_now_defaults_to_no_delay_correction():
     assert client.events.buffer_segments_calls == []
 
 
+def test_create_cue_now_applies_manual_offset():
+    # 60s in, no correct_for_delay, but a 0.5s manual offset -> 59.5s.
+    now = datetime(2026, 9, 10, 14, 1, 0, tzinfo=timezone.utc)
+    client = FakeClient(EVENT)
+
+    cues.create_cue_now(client, "enc1", "Test Cue", now=now, offset_seconds=0.5)
+
+    assert client.cues.created[-1] == ("prof1", "evt1", "00:00:59.500", "Test Cue")
+
+
+def test_create_cue_now_manual_offset_can_move_cue_later():
+    # A negative offset moves the cue later instead of earlier.
+    now = datetime(2026, 9, 10, 14, 1, 0, tzinfo=timezone.utc)
+    client = FakeClient(EVENT)
+
+    cues.create_cue_now(client, "enc1", "Test Cue", now=now, offset_seconds=-0.5)
+
+    assert client.cues.created[-1] == ("prof1", "evt1", "00:01:00.500", "Test Cue")
+
+
+def test_create_cue_now_manual_offset_stacks_with_delay_correction():
+    # 60s in, 8s streaming delay, plus a 0.5s manual offset -> 51.5s.
+    now = datetime(2026, 9, 10, 14, 1, 0, tzinfo=timezone.utc)
+    client = FakeClient(EVENT, delay=8.0)
+
+    cues.create_cue_now(
+        client, "enc1", "Test Cue", now=now, correct_for_delay=True, offset_seconds=0.5
+    )
+
+    assert client.cues.created[-1] == ("prof1", "evt1", "00:00:51.500", "Test Cue")
+
+
 def test_create_cue_now_default_clamps_to_zero():
     now = datetime(2026, 9, 10, 13, 59, 0, tzinfo=timezone.utc)  # before start
     client = FakeClient(EVENT)
