@@ -61,6 +61,9 @@ class FakeEventsAPI(EventsListMixin):
     def streaming_delay(self, event):
         return 0.0
 
+    def decoder_buffer_delay(self, event, buffer_segments=3):
+        return 0.0
+
 
 class FakeEncodersAPI:
     def list(self):

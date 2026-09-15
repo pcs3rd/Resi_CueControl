@@ -91,29 +91,46 @@ matching event, then `/resi/events/recent/done <days> <count>`.
 
 ## Why cue creation corrects for delay
 
-Resi's live playback lags real time — encoder buffering, segmenting, CDN
-propagation. Whatever triggers a delay-corrected `/resi/cue/create` (no
-explicit `position_seconds`) is almost always reacting to something just
-watched on a delayed player, so the real-world moment being marked
-actually happened a few seconds *before* the trigger fired, not at the
-instant it fired.
+Resi's live playback lags real time, in two separate stages:
+
+1. **Encoder/CDN packaging lag** — encoder buffering, segmenting, CDN
+   propagation. `event['hlsUrl']` itself is a master/variant playlist, not
+   the manifest with actual segments in it — `pyResi.fetch_manifest()`
+   follows the first variant it lists to get the real media playlist, then
+   `events.streaming_delay()` compares the request time against the
+   absolute time of the most recently encoded segment using its
+   `EXT-X-PROGRAM-DATE-TIME` tags (confirmed present on real Resi
+   manifests; falls back to `event.startTime` plus summed segment
+   durations if they're ever absent).
+2. **Decoder playback buffer** — separately, a downstream HLS decoder
+   (hardware or software) doesn't render at the manifest's live edge; it
+   holds back several segments first as a stall-avoidance buffer.
+   `events.decoder_buffer_delay()` estimates this from the manifest's own
+   `EXT-X-TARGETDURATION` (segments × target duration, 3 segments by
+   default) rather than a hardcoded number of seconds, so it tracks
+   whatever segment length the event is actually using. This is an
+   estimate, not a measured constant — real decoders vary, and
+   `buffer_segments` is a parameter on both `decoder_buffer_delay()` and
+   `total_delay()` if it needs calibrating against a specific decoder.
+
+Whatever triggers a delay-corrected `/resi/cue/create` (no explicit
+`position_seconds`) is almost always reacting to something just watched on
+a delayed player, so the real-world moment being marked actually happened
+`streaming_delay + decoder_buffer_delay` seconds *before* the trigger
+fired, not at the instant it fired.
 
 `create_cue_now()` (`src/resi_cuecontrol/cues.py`) corrects for this. The
 "now" it corrects from is the moment the OSC message arrived —
 `osc_server.py` captures that timestamp as the very first thing `_on_create`
 does, before making any Resi API calls, so the network round trip to
-resolve the live event never gets baked into the cue position. From
-there it measures the current delay via `pyResi`'s
-`events.streaming_delay()` — which reads the live event's HLS manifest
-and, when the manifest carries `EXT-X-PROGRAM-DATE-TIME` tags, compares
-the request time against the absolute time of the most recently encoded
-segment (falling back to `event.startTime` plus summed segment durations
-if those tags aren't present) — and subtracts that delay before turning
-the timestamp into a cue position. This is measured fresh on every cue
-creation, not a fixed calibrated constant, since the delay isn't
-guaranteed stable. `resi_cuecontrol.cues` logs the delay, elapsed time,
-and resulting position at `INFO` on every such create, so you can see the
-correction happen in the console.
+resolve the live event never gets baked into the cue position. It then
+measures both delay components fresh on every cue creation (neither is a
+fixed calibrated constant, since actual lag isn't guaranteed stable) and
+subtracts their sum before turning the timestamp into a cue position.
+`resi_cuecontrol.cues` logs the encode delay, decoder buffer delay, their
+total, elapsed time, and resulting position at `INFO` on every such
+create, so a mismatch can be traced to one component or the other in the
+console.
 
 ## Setup
 
@@ -155,12 +172,10 @@ commits on its own. After pushing changes to pyResi:
 uv lock --upgrade-package pyresi
 ```
 
-then commit the updated `uv.lock`. **This repo currently needs that step**:
-the `streaming_delay`/`event_start_time`/`seconds_to_position` helpers this
-project's cue logic depends on were added to pyResi locally but pushing
-them requires your own GitHub credentials (this tooling doesn't have
-push access to your accounts) — push pyResi's `main` yourself, then run the
-command above here.
+then commit the updated `uv.lock`. Pushing pyResi itself needs your own
+GitHub credentials (this tooling doesn't have push access to your
+accounts) — push pyResi's `main` yourself first, then run the command
+above here.
 
 ## Testing
 
@@ -207,20 +222,26 @@ Three layers, roughly in order of how much you can trust before going live:
    Don't point `/resi/cue/create` or `/resi/cue/update` at a production
    Sunday event. Test against a low-stakes live event first (a test stream,
    an empty room) so a wrong delay calculation or a typo doesn't leave junk
-   cues on something that matters. This is also the only way to actually
-   confirm the `EXT-X-PROGRAM-DATE-TIME` question in `streaming_delay()` —
-   watch `LOG_LEVEL=DEBUG` output (add a log line in `pyResi.events.live_edge_time`
-   if you want to see which path it took) the first time this runs against
-   a real stream.
+   cues on something that matters. It's also the only way to calibrate
+   `decoder_buffer_delay()`'s `buffer_segments` estimate against a
+   specific decoder: fire a video into the encoder and an auto-time
+   `/resi/cue/create` at the same instant, note how many seconds pass
+   before that decoder actually shows anything, and compare that to the
+   `INFO` log line's total delay — adjust `buffer_segments` if they don't
+   match.
 
 ## Status / open questions
 
-- Cue `position` values are relative to "the start of the video," and
-  whether Resi's HLS manifests actually carry `EXT-X-PROGRAM-DATE-TIME` tags
-  is unconfirmed — `streaming_delay()` falls back to `startTime` + summed
-  segment durations if they're absent, but hasn't been validated against a
-  real live event either way. Worth checking the first time this runs
-  against a real stream.
+- Cue `position` values are relative to "the start of the video." Resi's
+  HLS manifests do carry `EXT-X-PROGRAM-DATE-TIME` tags — confirmed against
+  a real live event — but only on the actual media playlist a variant
+  points to, not on `event['hlsUrl']` itself (that's a master/variant
+  playlist with no segments of its own; `pyResi.fetch_manifest()` follows
+  it to the real one).
+- `decoder_buffer_delay()`'s 3-segment estimate is a documented guess, not
+  a measured constant for any particular decoder hardware — see the
+  calibration note in the testing section above if cues still land off
+  from what a specific decoder shows.
 - The OSC reply scheme (fixed host/port rather than reply-to-sender) assumes
   a fixed-IP setup on both ends, matching how the rest of the AV network is
   wired. If that's wrong, `osc_server.py` is a small file to change.

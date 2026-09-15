@@ -54,8 +54,17 @@ def create_cue_now(client, encoder_id, name, *, now=None, private_cue=True):
 
     The correction matters because whatever triggers this is almost always
     reacting to something just watched on a delayed player: the real-world
-    moment being marked happened `streaming_delay` seconds before the
-    trigger fired, not at the instant it fired.
+    moment being marked happened some number of seconds before the trigger
+    fired, not at the instant it fired. That lag has two components,
+    logged separately below so a mismatch can be traced to one or the
+    other: `streaming_delay` (how far the manifest itself lags behind real
+    time — encoder/CDN packaging lag) and `decoder_buffer_delay` (the
+    downstream decoder's own playback buffer, estimated from the
+    manifest's segment duration — see pyResi's docstrings for both). This
+    is an estimate, not a measured constant: if cues still land off from
+    what a specific decoder actually shows, that's the number to recheck
+    and, if needed, override by passing `buffer_segments` through to
+    pyResi's decoder_buffer_delay().
 
     `private_cue` matches Resi's own field: True (the default, same as
     Studio's own cue editor) hides it from other viewers of the event;
@@ -63,15 +72,17 @@ def create_cue_now(client, encoder_id, name, *, now=None, private_cue=True):
     """
     event = _live_event(client, encoder_id)
     now = now or datetime.now(timezone.utc)
-    delay = client.events.streaming_delay(event)
+    encode_delay = client.events.streaming_delay(event)
+    buffer_delay = client.events.decoder_buffer_delay(event)
+    delay = encode_delay + buffer_delay
     start = event_start_time(event)
     elapsed_seconds = (now - start).total_seconds()
     target_seconds = max(0.0, elapsed_seconds - delay)
     position = seconds_to_position(target_seconds)
     log.info(
-        "auto time-adjusted cue %r on encoder %s: streaming delay %.3fs "
-        "(elapsed %.3fs -> position %s)",
-        name, encoder_id, delay, elapsed_seconds, position,
+        "auto time-adjusted cue %r on encoder %s: encode delay %.3fs + "
+        "decoder buffer %.3fs = total delay %.3fs (elapsed %.3fs -> position %s)",
+        name, encoder_id, encode_delay, buffer_delay, delay, elapsed_seconds, position,
     )
     return client.cues.create(
         event['eventProfileId'], event['uuid'], position, name, private_cue=private_cue

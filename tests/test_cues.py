@@ -31,9 +31,10 @@ class FakeCuesAPI:
 
 
 class FakeEventsAPI:
-    def __init__(self, event, delay=0.0):
+    def __init__(self, event, delay=0.0, buffer_delay=0.0):
         self._event = event
         self._delay = delay
+        self._buffer_delay = buffer_delay
 
     def current_for_encoder(self, encoder_id):
         return self._event
@@ -44,10 +45,13 @@ class FakeEventsAPI:
     def streaming_delay(self, event):
         return self._delay
 
+    def decoder_buffer_delay(self, event, buffer_segments=3):
+        return self._buffer_delay
+
 
 class FakeClient:
-    def __init__(self, event, delay=0.0, initial_cues=None):
-        self.events = FakeEventsAPI(event, delay)
+    def __init__(self, event, delay=0.0, buffer_delay=0.0, initial_cues=None):
+        self.events = FakeEventsAPI(event, delay, buffer_delay)
         self.cues = FakeCuesAPI(initial_cues)
 
 
@@ -112,6 +116,30 @@ def test_create_cue_now_logs_the_delay_it_applied(caplog):
     message = caplog.records[0].getMessage()
     assert "8.000" in message
     assert "00:00:52.000" in message
+
+
+def test_create_cue_now_subtracts_decoder_buffer_delay_too():
+    # 60s in, 8s streaming delay + 5s decoder buffer delay -> lands at 47s.
+    now = datetime(2026, 9, 10, 14, 1, 0, tzinfo=timezone.utc)
+    client = FakeClient(EVENT, delay=8.0, buffer_delay=5.0)
+
+    cues.create_cue_now(client, "enc1", "Test Cue", now=now)
+
+    assert client.cues.created[-1] == ("prof1", "evt1", "00:00:47.000", "Test Cue")
+
+
+def test_create_cue_now_logs_both_delay_components(caplog):
+    now = datetime(2026, 9, 10, 14, 1, 0, tzinfo=timezone.utc)
+    client = FakeClient(EVENT, delay=8.0, buffer_delay=5.0)
+
+    with caplog.at_level("INFO", logger="resi_cuecontrol.cues"):
+        cues.create_cue_now(client, "enc1", "Test Cue", now=now)
+
+    message = caplog.records[-1].getMessage()
+    assert "8.000" in message
+    assert "5.000" in message
+    assert "13.000" in message
+    assert "00:00:47.000" in message
 
 
 def test_create_cue_at_ignores_streaming_delay():
