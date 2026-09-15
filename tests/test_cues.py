@@ -1,0 +1,109 @@
+"""Unit tests for cue business logic — no network, no real Resi account.
+Exercises the delay-correction math against a fake pyResi client."""
+
+from datetime import datetime, timezone
+
+import pytest
+
+from resi_cuecontrol import cues
+
+
+class FakeCuesAPI:
+    def __init__(self, initial=None):
+        self.created = []
+        self.updated = []
+        self._cues = list(initial or [])
+
+    def list(self, event_profile_id, event_id):
+        return list(self._cues)
+
+    def create(self, event_profile_id, event_id, position, name, **kw):
+        cue = {"uuid": "new-uuid", "position": position, "name": name}
+        self._cues.append(cue)
+        self.created.append((event_profile_id, event_id, position, name))
+        return cue
+
+    def update(self, event_profile_id, event_id, cue_id, position, name, **kw):
+        self.updated.append((event_profile_id, event_id, cue_id, position, name))
+        return True
+
+
+class FakeEventsAPI:
+    def __init__(self, event, delay=0.0):
+        self._event = event
+        self._delay = delay
+
+    def current_for_encoder(self, encoder_id):
+        return self._event
+
+    def streaming_delay(self, event):
+        return self._delay
+
+
+class FakeClient:
+    def __init__(self, event, delay=0.0, initial_cues=None):
+        self.events = FakeEventsAPI(event, delay)
+        self.cues = FakeCuesAPI(initial_cues)
+
+
+EVENT = {
+    "uuid": "evt1",
+    "eventProfileId": "prof1",
+    "startTime": "2026-09-10T14:00:00Z",
+}
+
+
+def test_read_cues_returns_position_in_seconds():
+    client = FakeClient(
+        EVENT,
+        initial_cues=[
+            {"uuid": "c1", "position": "0:00:05.000", "name": "Start"},
+            {"uuid": "c2", "position": "0:00:10.000", "name": "Mid"},
+        ],
+    )
+    assert cues.read_cues(client, "enc1") == [
+        ("c1", 5.0, "Start"),
+        ("c2", 10.0, "Mid"),
+    ]
+
+
+def test_create_cue_now_subtracts_streaming_delay():
+    # 60s after start, 8s of measured streaming delay -> cue lands at 52s.
+    now = datetime(2026, 9, 10, 14, 1, 0, tzinfo=timezone.utc)
+    client = FakeClient(EVENT, delay=8.0)
+
+    cues.create_cue_now(client, "enc1", "Test Cue", now=now)
+
+    assert client.cues.created[-1] == ("prof1", "evt1", "0:00:52.000", "Test Cue")
+
+
+def test_create_cue_now_clamps_to_zero_when_delay_exceeds_elapsed():
+    # Only 2s into the event but a 10s measured delay -> never go negative.
+    now = datetime(2026, 9, 10, 14, 0, 2, tzinfo=timezone.utc)
+    client = FakeClient(EVENT, delay=10.0)
+
+    cues.create_cue_now(client, "enc1", "Edge", now=now)
+
+    assert client.cues.created[-1][2] == "0:00:00.000"
+
+
+def test_update_cue_sends_seconds_as_position_string():
+    client = FakeClient(EVENT)
+
+    position = cues.update_cue(client, "enc1", "c1", 12.5, "Renamed")
+
+    assert position == "0:00:12.500"
+    assert client.cues.updated[-1] == ("prof1", "evt1", "c1", "0:00:12.500", "Renamed")
+
+
+def test_encoder_not_live_raises_for_read_create_and_update():
+    client = FakeClient(event=None)
+
+    with pytest.raises(cues.EncoderNotLive):
+        cues.read_cues(client, "enc-offline")
+
+    with pytest.raises(cues.EncoderNotLive):
+        cues.create_cue_now(client, "enc-offline", "x")
+
+    with pytest.raises(cues.EncoderNotLive):
+        cues.update_cue(client, "enc-offline", "c1", 0.0, "x")

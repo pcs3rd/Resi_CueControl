@@ -18,3 +18,8 @@ build-backend = "uv_build"
 
 [tool.uv.sources]
 pyresi = { git = "https://github.com/pcs3rd/pyResi" }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

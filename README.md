@@ -87,6 +87,57 @@ them requires your own GitHub credentials (this tooling doesn't have
 push access to your accounts) — push pyResi's `main` yourself, then run the
 command above here.
 
+## Testing
+
+Three layers, roughly in order of how much you can trust before going live:
+
+1. **Unit tests — no network, no Resi account, run these constantly:**
+   ```bash
+   pytest
+   ```
+   `tests/test_cues.py` exercises the delay-correction math (including the
+   clamp-to-zero edge case) against a fake pyResi client. `tests/test_osc_server.py`
+   sends real UDP OSC packets into a running `OSCApp` and checks the reply
+   messages — proves the dispatcher wiring and reply addresses are right
+   without touching Resi at all.
+
+2. **Manual OSC smoke test against the real server, still no live event
+   needed for `read`/`update` against a *finished* recording:** start the
+   server in one terminal:
+   ```bash
+   RESI_USERNAME=... RESI_PASSWORD=... resi-cuecontrol
+   ```
+   and in another, send it a command and watch for the reply. With
+   `python-osc` installed (it's already in this project's venv):
+   ```bash
+   python3 -c "
+   from pythonosc.udp_client import SimpleUDPClient
+   SimpleUDPClient('127.0.0.1', 9000).send_message('/resi/cue/read', ['<encoder_id>'])
+   "
+   ```
+   and a listener to see what comes back:
+   ```bash
+   python3 -c "
+   from pythonosc.dispatcher import Dispatcher
+   from pythonosc.osc_server import BlockingOSCUDPServer
+   d = Dispatcher()
+   d.set_default_handler(lambda addr, *args: print(addr, args))
+   BlockingOSCUDPServer(('127.0.0.1', 9001), d).serve_forever()
+   "
+   ```
+   (If you have `liblo`'s command-line tools, `oscsend localhost 9000 /resi/cue/read s <encoder_id>`
+   and `oscdump 9001` do the same thing with less typing.)
+
+3. **Live create/update against a real encoder — has real side effects.**
+   Don't point `/resi/cue/create` or `/resi/cue/update` at a production
+   Sunday event. Test against a low-stakes live event first (a test stream,
+   an empty room) so a wrong delay calculation or a typo doesn't leave junk
+   cues on something that matters. This is also the only way to actually
+   confirm the `EXT-X-PROGRAM-DATE-TIME` question in `streaming_delay()` —
+   watch `LOG_LEVEL=DEBUG` output (add a log line in `pyResi.events.live_edge_time`
+   if you want to see which path it took) the first time this runs against
+   a real stream.
+
 ## Status / open questions
 
 - Cue `position` values are relative to "the start of the video," and
