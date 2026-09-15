@@ -162,6 +162,12 @@ Environment variables, all optional except the Resi credentials:
 - `OSC_LISTEN_HOST` (default `0.0.0.0`), `OSC_LISTEN_PORT` (default `9000`)
 - `OSC_REPLY_HOST` (default `127.0.0.1`), `OSC_REPLY_PORT` (default `9001`)
 - `LOG_LEVEL` (default `INFO`)
+- `DECODER_BUFFER_SEGMENTS` (default `3`) — how many manifest segments'
+  worth of downstream decoder playback buffering `/resi/cue/create`'s
+  delay correction assumes, on top of the measured encoder/CDN lag. A
+  rough estimate, not a measured constant for any specific decoder — see
+  "Why cue creation corrects for delay" and the calibration note under
+  Testing below.
 
 ## Picking up pyResi changes
 
@@ -223,12 +229,17 @@ Three layers, roughly in order of how much you can trust before going live:
    Sunday event. Test against a low-stakes live event first (a test stream,
    an empty room) so a wrong delay calculation or a typo doesn't leave junk
    cues on something that matters. It's also the only way to calibrate
-   `decoder_buffer_delay()`'s `buffer_segments` estimate against a
-   specific decoder: fire a video into the encoder and an auto-time
+   `decoder_buffer_delay()`'s buffer-segments estimate against a specific
+   decoder: fire a video into the encoder and an auto-time
    `/resi/cue/create` at the same instant, note how many seconds pass
    before that decoder actually shows anything, and compare that to the
-   `INFO` log line's total delay — adjust `buffer_segments` if they don't
-   match.
+   `INFO` log line's total delay. If they don't match, set
+   `DECODER_BUFFER_SEGMENTS` (an env var, not a code change — restart the
+   server to pick it up) closer to whatever value would have made them
+   match, and retest. Expect this to take a few rounds and never land
+   exactly — the "when did the video start" side of the comparison is a
+   human eyeballing a screen, so a couple of seconds of residual error is
+   noise, not a bug to keep chasing.
 
 ## Status / open questions
 

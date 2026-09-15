@@ -47,7 +47,7 @@ def read_cues_for_event(client, event_id):
     ]
 
 
-def create_cue_now(client, encoder_id, name, *, now=None, private_cue=True):
+def create_cue_now(client, encoder_id, name, *, now=None, private_cue=True, buffer_segments=3):
     """Create a cue at the real-world moment this was called (pass `now` to
     override, e.g. in tests), corrected for how far Resi's live playback is
     currently lagging behind real time.
@@ -59,12 +59,17 @@ def create_cue_now(client, encoder_id, name, *, now=None, private_cue=True):
     logged separately below so a mismatch can be traced to one or the
     other: `streaming_delay` (how far the manifest itself lags behind real
     time — encoder/CDN packaging lag) and `decoder_buffer_delay` (the
-    downstream decoder's own playback buffer, estimated from the
-    manifest's segment duration — see pyResi's docstrings for both). This
-    is an estimate, not a measured constant: if cues still land off from
-    what a specific decoder actually shows, that's the number to recheck
-    and, if needed, override by passing `buffer_segments` through to
-    pyResi's decoder_buffer_delay().
+    downstream decoder's own playback buffer, estimated as
+    `buffer_segments` times the manifest's own segment duration — see
+    pyResi's docstrings for both).
+
+    Neither is a measured constant, and `buffer_segments` in particular is
+    a rough estimate (3, by default) rather than anything specific to a
+    real decoder. If cues still land off from what a specific decoder
+    actually shows, this is the number to calibrate — pass a different
+    value here (the OSC server exposes it as the DECODER_BUFFER_SEGMENTS
+    environment variable, see osc_server.py) rather than treating the
+    default as correct.
 
     `private_cue` matches Resi's own field: True (the default, same as
     Studio's own cue editor) hides it from other viewers of the event;
@@ -73,7 +78,7 @@ def create_cue_now(client, encoder_id, name, *, now=None, private_cue=True):
     event = _live_event(client, encoder_id)
     now = now or datetime.now(timezone.utc)
     encode_delay = client.events.streaming_delay(event)
-    buffer_delay = client.events.decoder_buffer_delay(event)
+    buffer_delay = client.events.decoder_buffer_delay(event, buffer_segments)
     delay = encode_delay + buffer_delay
     start = event_start_time(event)
     elapsed_seconds = (now - start).total_seconds()
@@ -81,8 +86,10 @@ def create_cue_now(client, encoder_id, name, *, now=None, private_cue=True):
     position = seconds_to_position(target_seconds)
     log.info(
         "auto time-adjusted cue %r on encoder %s: encode delay %.3fs + "
-        "decoder buffer %.3fs = total delay %.3fs (elapsed %.3fs -> position %s)",
-        name, encoder_id, encode_delay, buffer_delay, delay, elapsed_seconds, position,
+        "decoder buffer %.3fs (%s segments) = total delay %.3fs "
+        "(elapsed %.3fs -> position %s)",
+        name, encoder_id, encode_delay, buffer_delay, buffer_segments, delay,
+        elapsed_seconds, position,
     )
     return client.cues.create(
         event['eventProfileId'], event['uuid'], position, name, private_cue=private_cue

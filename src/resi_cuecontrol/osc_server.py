@@ -25,6 +25,14 @@ the cue lands at the moment the OSC message arrived, delay-corrected;
 include it and that exact timeline position is used verbatim instead,
 with no delay correction and no dependence on request timing at all.
 
+The delay correction's decoder-buffer component is an estimate
+(`buffer_segments`, default 3 — see cues.create_cue_now()) rather than a
+measured constant for any particular decoder. It's set once at startup
+via the DECODER_BUFFER_SEGMENTS environment variable (see __init__.py's
+main()) and applies to every /resi/cue/create call for this process —
+recalibrate it there if cues consistently land off from what a decoder
+actually shows.
+
 Every command sends a reply to a fixed target (OSC_REPLY_HOST /
 OSC_REPLY_PORT) rather than back to the sender's address, since the usual
 setup here is fixed IPs on both ends. On error, callers get
@@ -53,9 +61,17 @@ class OSCApp:
         listen_port=9000,
         reply_host='127.0.0.1',
         reply_port=9001,
+        buffer_segments=3,
     ):
         self.client = client
         self.reply = SimpleUDPClient(reply_host, reply_port)
+        # How many manifest segments' worth of playback buffering to assume
+        # a downstream decoder holds before it renders anything, on top of
+        # the encode/CDN lag pyResi reads off the manifest directly — see
+        # cues.create_cue_now()'s docstring. A rough, calibratable estimate,
+        # not a measured constant; tune via the DECODER_BUFFER_SEGMENTS
+        # environment variable rather than editing this default.
+        self.buffer_segments = buffer_segments
 
         dispatcher = Dispatcher()
         dispatcher.map('/resi/cue/read', self._on_read)
@@ -114,7 +130,12 @@ class OSCApp:
         try:
             if position_seconds is None:
                 cue = cues.create_cue_now(
-                    self.client, encoder_id, name, now=received_at, private_cue=private_cue
+                    self.client,
+                    encoder_id,
+                    name,
+                    now=received_at,
+                    private_cue=private_cue,
+                    buffer_segments=self.buffer_segments,
                 )
             else:
                 cue = cues.create_cue_at(

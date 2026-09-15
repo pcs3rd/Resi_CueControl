@@ -35,6 +35,7 @@ class FakeEventsAPI:
         self._event = event
         self._delay = delay
         self._buffer_delay = buffer_delay
+        self.buffer_segments_calls = []
 
     def current_for_encoder(self, encoder_id):
         return self._event
@@ -46,6 +47,7 @@ class FakeEventsAPI:
         return self._delay
 
     def decoder_buffer_delay(self, event, buffer_segments=3):
+        self.buffer_segments_calls.append(buffer_segments)
         return self._buffer_delay
 
 
@@ -150,6 +152,24 @@ def test_create_cue_at_ignores_streaming_delay():
     cues.create_cue_at(client, "enc1", 30.0, "At 30s")
 
     assert client.cues.created[-1] == ("prof1", "evt1", "00:00:30.000", "At 30s")
+
+
+def test_create_cue_now_passes_buffer_segments_through():
+    now = datetime(2026, 9, 10, 14, 1, 0, tzinfo=timezone.utc)
+    client = FakeClient(EVENT, delay=0.0, buffer_delay=0.0)
+
+    cues.create_cue_now(client, "enc1", "Test Cue", now=now, buffer_segments=5)
+
+    assert client.events.buffer_segments_calls == [5]
+
+
+def test_create_cue_now_defaults_buffer_segments_to_three():
+    now = datetime(2026, 9, 10, 14, 1, 0, tzinfo=timezone.utc)
+    client = FakeClient(EVENT, delay=0.0, buffer_delay=0.0)
+
+    cues.create_cue_now(client, "enc1", "Test Cue", now=now)
+
+    assert client.events.buffer_segments_calls == [3]
 
 
 def test_create_cue_now_defaults_to_private():

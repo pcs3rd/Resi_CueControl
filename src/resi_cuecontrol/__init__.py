@@ -39,6 +39,13 @@ def main() -> None:
         listen_port=int(os.environ.get("OSC_LISTEN_PORT", "9000")),
         reply_host=os.environ.get("OSC_REPLY_HOST", "127.0.0.1"),
         reply_port=int(os.environ.get("OSC_REPLY_PORT", "9001")),
+        # How many manifest segments' worth of decoder-side playback
+        # buffering to correct auto-time cues for, on top of the measured
+        # encoder/CDN lag. A rough estimate (3 segments), not a measured
+        # constant for any specific decoder — tune this against how far
+        # off a real cue lands from what your decoder actually shows (see
+        # README's testing/calibration section) rather than guessing.
+        buffer_segments=float(os.environ.get("DECODER_BUFFER_SEGMENTS", "3")),
     )
     app.serve_forever()
 

@@ -50,6 +50,9 @@ class EventsListMixin:
 
 
 class FakeEventsAPI(EventsListMixin):
+    def __init__(self):
+        self.buffer_segments_calls = []
+
     def current_for_encoder(self, encoder_id):
         return {
             "uuid": "evt1",
@@ -62,6 +65,7 @@ class FakeEventsAPI(EventsListMixin):
         return 0.0
 
     def decoder_buffer_delay(self, event, buffer_segments=3):
+        self.buffer_segments_calls.append(buffer_segments)
         return 0.0
 
 
@@ -150,6 +154,32 @@ def test_osc_commands_round_trip():
         {"private_cue": True},
         {"private_cue": False},
     ]
+
+
+def test_create_uses_configured_buffer_segments():
+    port_offset = 10
+    server, received, stopper = _collect_replies(REPLY_PORT + port_offset, count=1)
+
+    client = FakeClient()
+    app = OSCApp(
+        client,
+        listen_host="127.0.0.1",
+        listen_port=LISTEN_PORT + port_offset,
+        reply_host="127.0.0.1",
+        reply_port=REPLY_PORT + port_offset,
+        buffer_segments=7,
+    )
+    app_thread = threading.Thread(target=app.serve_forever, daemon=True)
+    app_thread.start()
+    time.sleep(0.2)
+
+    osc_client = SimpleUDPClient("127.0.0.1", LISTEN_PORT + port_offset)
+    osc_client.send_message("/resi/cue/create", ["enc1", "NewCue", False])
+
+    stopper.join(timeout=3.0)
+    app.server.shutdown()
+
+    assert client.events.buffer_segments_calls == [7]
 
 
 def test_unknown_encoder_replies_with_error_not_silence():
