@@ -156,6 +156,38 @@ def test_osc_commands_round_trip():
     ]
 
 
+def test_create_defaults_to_no_delay_correction():
+    # 20, not 11: LISTEN_PORT and REPLY_PORT are only 1 apart, so an
+    # offset of 11 here would put this test's listen port on the same
+    # number as test_create_uses_configured_buffer_segments' reply port
+    # (offset 10) -- a bind collision between two unrelated tests.
+    port_offset = 20
+    server, received, stopper = _collect_replies(REPLY_PORT + port_offset, count=1)
+
+    client = FakeClient()
+    app = OSCApp(
+        client,
+        listen_host="127.0.0.1",
+        listen_port=LISTEN_PORT + port_offset,
+        reply_host="127.0.0.1",
+        reply_port=REPLY_PORT + port_offset,
+    )
+    app_thread = threading.Thread(target=app.serve_forever, daemon=True)
+    app_thread.start()
+    time.sleep(0.2)
+
+    osc_client = SimpleUDPClient("127.0.0.1", LISTEN_PORT + port_offset)
+    osc_client.send_message("/resi/cue/create", ["enc1", "NewCue", False])
+
+    stopper.join(timeout=3.0)
+    app.server.shutdown()
+
+    # No CORRECT_FOR_DELAY configured -> decoder_buffer_delay is never
+    # even asked for, matching the confirmed real trigger (ProPresenter
+    # over MIDI) which needs no delay correction at all.
+    assert client.events.buffer_segments_calls == []
+
+
 def test_create_uses_configured_buffer_segments():
     port_offset = 10
     server, received, stopper = _collect_replies(REPLY_PORT + port_offset, count=1)
@@ -167,6 +199,7 @@ def test_create_uses_configured_buffer_segments():
         listen_port=LISTEN_PORT + port_offset,
         reply_host="127.0.0.1",
         reply_port=REPLY_PORT + port_offset,
+        correct_for_delay=True,
         buffer_segments=7,
     )
     app_thread = threading.Thread(target=app.serve_forever, daemon=True)

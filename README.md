@@ -89,48 +89,53 @@ encoder. Replies with one
 `/resi/recent_event/entry <encoder_id> <uuid> <name> <start_time>` per
 matching event, then `/resi/events/recent/done <days> <count>`.
 
-## Why cue creation corrects for delay
+## Why cue creation doesn't correct for delay (by default)
 
-Resi's live playback lags real time, in two separate stages:
+This project's actual trigger is ProPresenter firing `/resi/cue/create`
+over MIDI the instant it starts playing a video — the same real-world
+moment as the thing being marked, with no operator watching a delayed
+screen and reacting in between. For that trigger, the correct cue
+position is just elapsed time since the event started; no delay
+subtraction belongs in the math at all, and `create_cue_now()` defaults
+to exactly that: `position = now - event_start`, clamped to zero.
 
-1. **Encoder/CDN packaging lag** — encoder buffering, segmenting, CDN
-   propagation. `event['hlsUrl']` itself is a master/variant playlist, not
-   the manifest with actual segments in it — `pyResi.fetch_manifest()`
-   follows the first variant it lists to get the real media playlist, then
-   `events.streaming_delay()` compares the request time against the
-   absolute time of the most recently encoded segment using its
-   `EXT-X-PROGRAM-DATE-TIME` tags (confirmed present on real Resi
-   manifests; falls back to `event.startTime` plus summed segment
-   durations if they're ever absent).
-2. **Decoder playback buffer** — separately, a downstream HLS decoder
-   (hardware or software) doesn't render at the manifest's live edge; it
-   holds back several segments first as a stall-avoidance buffer.
-   `events.decoder_buffer_delay()` estimates this from the manifest's own
-   `EXT-X-TARGETDURATION` (segments × target duration, 3 segments by
-   default) rather than a hardcoded number of seconds, so it tracks
-   whatever segment length the event is actually using. This is an
-   estimate, not a measured constant — real decoders vary, and
-   `buffer_segments` is a parameter on both `decoder_buffer_delay()` and
-   `total_delay()` if it needs calibrating against a specific decoder.
+That default came from live calibration, not a guess. Resi's live
+playback does lag real time — `pyResi.events.streaming_delay()` measures
+real encoder/CDN packaging lag by reading the manifest's own
+`EXT-X-PROGRAM-DATE-TIME` tags (confirmed present on real events, once
+`fetch_manifest()` follows `event['hlsUrl']`'s master/variant playlist to
+the actual media playlist with segments in it), and
+`decoder_buffer_delay()` estimates a downstream decoder's own playback
+buffer from the manifest's `EXT-X-TARGETDURATION`. Both are real,
+correctly-computed numbers. But testing against the actual ProPresenter
+MIDI trigger — firing a video and the cue at the same instant, then
+checking how far off the resulting cue landed from where the video
+actually starts — showed that subtracting either of them (or both) made
+the cue land early by very close to whatever was subtracted. The
+streaming/decoder delay this project was originally built to correct for
+just isn't part of this trigger's path.
 
-Whatever triggers a delay-corrected `/resi/cue/create` (no explicit
-`position_seconds`) is almost always reacting to something just watched on
-a delayed player, so the real-world moment being marked actually happened
-`streaming_delay + decoder_buffer_delay` seconds *before* the trigger
-fired, not at the instant it fired.
+Set `CORRECT_FOR_DELAY=true` (an environment variable, see
+`src/resi_cuecontrol/__init__.py`) for the other scenario this project
+can still handle: an operator reacting to something they just watched on
+a delayed decoder, where the real-world moment being marked genuinely did
+happen some number of seconds before the trigger fired. That mode has
+never been calibrated against a real reacting-to-a-delayed-decoder
+workflow — only against the simultaneous MIDI trigger, where the answer
+turned out to be "don't correct at all" — so treat its numbers as
+unverified for that use case. In that mode, `DECODER_BUFFER_SEGMENTS`
+(default 3) tunes the decoder-buffer estimate; see the calibration note
+under Testing below.
 
-`create_cue_now()` (`src/resi_cuecontrol/cues.py`) corrects for this. The
-"now" it corrects from is the moment the OSC message arrived —
-`osc_server.py` captures that timestamp as the very first thing `_on_create`
-does, before making any Resi API calls, so the network round trip to
-resolve the live event never gets baked into the cue position. It then
-measures both delay components fresh on every cue creation (neither is a
-fixed calibrated constant, since actual lag isn't guaranteed stable) and
-subtracts their sum before turning the timestamp into a cue position.
-`resi_cuecontrol.cues` logs the encode delay, decoder buffer delay, their
-total, elapsed time, and resulting position at `INFO` on every such
-create, so a mismatch can be traced to one component or the other in the
-console.
+`create_cue_now()` (`src/resi_cuecontrol/cues.py`) is where this lives.
+The "now" it works from is the moment the OSC message arrived —
+`osc_server.py` captures that timestamp as the very first thing
+`_on_create` does, before making any Resi API calls, so the network round
+trip to resolve the live event never gets baked into the cue position.
+`resi_cuecontrol.cues` logs elapsed time and the resulting position at
+`INFO` on every create (plus the encode delay, decoder buffer delay, and
+their total when `CORRECT_FOR_DELAY` is on), so the console always shows
+exactly what math produced a given cue.
 
 ## Setup
 
@@ -162,12 +167,16 @@ Environment variables, all optional except the Resi credentials:
 - `OSC_LISTEN_HOST` (default `0.0.0.0`), `OSC_LISTEN_PORT` (default `9000`)
 - `OSC_REPLY_HOST` (default `127.0.0.1`), `OSC_REPLY_PORT` (default `9001`)
 - `LOG_LEVEL` (default `INFO`)
-- `DECODER_BUFFER_SEGMENTS` (default `3`) — how many manifest segments'
-  worth of downstream decoder playback buffering `/resi/cue/create`'s
-  delay correction assumes, on top of the measured encoder/CDN lag. A
-  rough estimate, not a measured constant for any specific decoder — see
-  "Why cue creation corrects for delay" and the calibration note under
-  Testing below.
+- `CORRECT_FOR_DELAY` (default `false`) — turns on delay-corrected
+  `/resi/cue/create` (subtracting encode + decoder buffer lag) for a
+  trigger that reacts to something seen on a delayed decoder. Leave this
+  off for this project's actual trigger (ProPresenter over MIDI) — see
+  "Why cue creation doesn't correct for delay (by default)".
+- `DECODER_BUFFER_SEGMENTS` (default `3`) — only used when
+  `CORRECT_FOR_DELAY` is on: how many manifest segments' worth of
+  downstream decoder playback buffering to assume, on top of the measured
+  encoder/CDN lag. A rough estimate, not a measured constant for any
+  specific decoder — see the calibration note under Testing below.
 
 ## Picking up pyResi changes
 
@@ -228,18 +237,19 @@ Three layers, roughly in order of how much you can trust before going live:
    Don't point `/resi/cue/create` or `/resi/cue/update` at a production
    Sunday event. Test against a low-stakes live event first (a test stream,
    an empty room) so a wrong delay calculation or a typo doesn't leave junk
-   cues on something that matters. It's also the only way to calibrate
-   `decoder_buffer_delay()`'s buffer-segments estimate against a specific
-   decoder: fire a video into the encoder and an auto-time
-   `/resi/cue/create` at the same instant, note how many seconds pass
-   before that decoder actually shows anything, and compare that to the
-   `INFO` log line's total delay. If they don't match, set
-   `DECODER_BUFFER_SEGMENTS` (an env var, not a code change — restart the
-   server to pick it up) closer to whatever value would have made them
-   match, and retest. Expect this to take a few rounds and never land
-   exactly — the "when did the video start" side of the comparison is a
-   human eyeballing a screen, so a couple of seconds of residual error is
-   noise, not a bug to keep chasing.
+   cues on something that matters.
+
+   By default (`CORRECT_FOR_DELAY=false`) there's nothing to calibrate —
+   firing the trigger and checking the cue lands at elapsed time since
+   event start is the whole test. If you ever turn `CORRECT_FOR_DELAY` on
+   for a different trigger, calibrate `DECODER_BUFFER_SEGMENTS` the same
+   way this project's own MIDI trigger was calibrated: fire a video and
+   an auto-time `/resi/cue/create` at the same instant, note how far the
+   resulting cue lands from where the video actually starts, and adjust
+   from there — restart the server to pick up the new env var each time.
+   Don't assume any particular value transfers between triggers or
+   decoders; this project's own numbers turned out to need
+   `CORRECT_FOR_DELAY=false` entirely, not just a tuned segment count.
 
 ## Status / open questions
 
@@ -249,10 +259,22 @@ Three layers, roughly in order of how much you can trust before going live:
   points to, not on `event['hlsUrl']` itself (that's a master/variant
   playlist with no segments of its own; `pyResi.fetch_manifest()` follows
   it to the real one).
-- `decoder_buffer_delay()`'s 3-segment estimate is a documented guess, not
-  a measured constant for any particular decoder hardware — see the
-  calibration note in the testing section above if cues still land off
-  from what a specific decoder shows.
+- `CORRECT_FOR_DELAY` defaults to `false` because this project's real
+  trigger (ProPresenter over MIDI) needs no delay correction at all —
+  confirmed by live calibration, not assumed. If `CORRECT_FOR_DELAY=true`
+  is ever needed for a different trigger, note that `streaming_delay()`'s
+  manifest-lag measurement (encoder/CDN packaging lag) and
+  `decoder_buffer_delay()`'s segment-based estimate have only been
+  validated in isolation, not against a real reacting-to-a-delayed-decoder
+  workflow — recalibrate `DECODER_BUFFER_SEGMENTS` from scratch for that
+  case rather than trusting the default.
+- A manifest we inspected live also carries `EXT-X-START:TIME-OFFSET=-20`
+  — an explicit instruction for where a compliant player should start
+  playback relative to the live edge. That's a more precise potential
+  source for a future `decoder_buffer_delay()` than the current
+  segments-times-target-duration estimate, if `CORRECT_FOR_DELAY` mode
+  ever needs revisiting — not implemented, since the default path doesn't
+  need it.
 - The OSC reply scheme (fixed host/port rather than reply-to-sender) assumes
   a fixed-IP setup on both ends, matching how the rest of the AV network is
   wired. If that's wrong, `osc_server.py` is a small file to change.

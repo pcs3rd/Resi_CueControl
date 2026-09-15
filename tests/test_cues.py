@@ -87,12 +87,48 @@ def test_read_cues_for_event_uses_events_get_directly():
     assert cues.read_cues_for_event(client, "evt1") == [("c1", 5.0, "Start")]
 
 
-def test_create_cue_now_subtracts_streaming_delay():
+def test_create_cue_now_defaults_to_no_delay_correction():
+    # 60s after start, no correct_for_delay passed -> lands at 60s exactly,
+    # matching the confirmed real trigger (ProPresenter over MIDI, firing
+    # at the same instant as the thing being marked).
+    now = datetime(2026, 9, 10, 14, 1, 0, tzinfo=timezone.utc)
+    client = FakeClient(EVENT, delay=8.0, buffer_delay=5.0)
+
+    cues.create_cue_now(client, "enc1", "Test Cue", now=now)
+
+    assert client.cues.created[-1] == ("prof1", "evt1", "00:01:00.000", "Test Cue")
+    # And it shouldn't even ask the fake for a delay it isn't going to use.
+    assert client.events.buffer_segments_calls == []
+
+
+def test_create_cue_now_default_clamps_to_zero():
+    now = datetime(2026, 9, 10, 13, 59, 0, tzinfo=timezone.utc)  # before start
+    client = FakeClient(EVENT)
+
+    cues.create_cue_now(client, "enc1", "Edge", now=now)
+
+    assert client.cues.created[-1][2] == "00:00:00.000"
+
+
+def test_create_cue_now_default_logs_no_correction(caplog):
+    now = datetime(2026, 9, 10, 14, 1, 0, tzinfo=timezone.utc)
+    client = FakeClient(EVENT)
+
+    with caplog.at_level("INFO", logger="resi_cuecontrol.cues"):
+        cues.create_cue_now(client, "enc1", "Test Cue", now=now)
+
+    assert len(caplog.records) == 1
+    message = caplog.records[0].getMessage()
+    assert "no delay correction" in message
+    assert "00:01:00.000" in message
+
+
+def test_create_cue_now_subtracts_streaming_delay_when_correcting():
     # 60s after start, 8s of measured streaming delay -> cue lands at 52s.
     now = datetime(2026, 9, 10, 14, 1, 0, tzinfo=timezone.utc)
     client = FakeClient(EVENT, delay=8.0)
 
-    cues.create_cue_now(client, "enc1", "Test Cue", now=now)
+    cues.create_cue_now(client, "enc1", "Test Cue", now=now, correct_for_delay=True)
 
     assert client.cues.created[-1] == ("prof1", "evt1", "00:00:52.000", "Test Cue")
 
@@ -102,7 +138,7 @@ def test_create_cue_now_clamps_to_zero_when_delay_exceeds_elapsed():
     now = datetime(2026, 9, 10, 14, 0, 2, tzinfo=timezone.utc)
     client = FakeClient(EVENT, delay=10.0)
 
-    cues.create_cue_now(client, "enc1", "Edge", now=now)
+    cues.create_cue_now(client, "enc1", "Edge", now=now, correct_for_delay=True)
 
     assert client.cues.created[-1][2] == "00:00:00.000"
 
@@ -112,7 +148,7 @@ def test_create_cue_now_logs_the_delay_it_applied(caplog):
     client = FakeClient(EVENT, delay=8.0)
 
     with caplog.at_level("INFO", logger="resi_cuecontrol.cues"):
-        cues.create_cue_now(client, "enc1", "Test Cue", now=now)
+        cues.create_cue_now(client, "enc1", "Test Cue", now=now, correct_for_delay=True)
 
     assert len(caplog.records) == 1
     message = caplog.records[0].getMessage()
@@ -125,7 +161,7 @@ def test_create_cue_now_subtracts_decoder_buffer_delay_too():
     now = datetime(2026, 9, 10, 14, 1, 0, tzinfo=timezone.utc)
     client = FakeClient(EVENT, delay=8.0, buffer_delay=5.0)
 
-    cues.create_cue_now(client, "enc1", "Test Cue", now=now)
+    cues.create_cue_now(client, "enc1", "Test Cue", now=now, correct_for_delay=True)
 
     assert client.cues.created[-1] == ("prof1", "evt1", "00:00:47.000", "Test Cue")
 
@@ -135,7 +171,7 @@ def test_create_cue_now_logs_both_delay_components(caplog):
     client = FakeClient(EVENT, delay=8.0, buffer_delay=5.0)
 
     with caplog.at_level("INFO", logger="resi_cuecontrol.cues"):
-        cues.create_cue_now(client, "enc1", "Test Cue", now=now)
+        cues.create_cue_now(client, "enc1", "Test Cue", now=now, correct_for_delay=True)
 
     message = caplog.records[-1].getMessage()
     assert "8.000" in message
@@ -154,20 +190,22 @@ def test_create_cue_at_ignores_streaming_delay():
     assert client.cues.created[-1] == ("prof1", "evt1", "00:00:30.000", "At 30s")
 
 
-def test_create_cue_now_passes_buffer_segments_through():
+def test_create_cue_now_passes_buffer_segments_through_when_correcting():
     now = datetime(2026, 9, 10, 14, 1, 0, tzinfo=timezone.utc)
     client = FakeClient(EVENT, delay=0.0, buffer_delay=0.0)
 
-    cues.create_cue_now(client, "enc1", "Test Cue", now=now, buffer_segments=5)
+    cues.create_cue_now(
+        client, "enc1", "Test Cue", now=now, correct_for_delay=True, buffer_segments=5
+    )
 
     assert client.events.buffer_segments_calls == [5]
 
 
-def test_create_cue_now_defaults_buffer_segments_to_three():
+def test_create_cue_now_defaults_buffer_segments_to_three_when_correcting():
     now = datetime(2026, 9, 10, 14, 1, 0, tzinfo=timezone.utc)
     client = FakeClient(EVENT, delay=0.0, buffer_delay=0.0)
 
-    cues.create_cue_now(client, "enc1", "Test Cue", now=now)
+    cues.create_cue_now(client, "enc1", "Test Cue", now=now, correct_for_delay=True)
 
     assert client.events.buffer_segments_calls == [3]
 

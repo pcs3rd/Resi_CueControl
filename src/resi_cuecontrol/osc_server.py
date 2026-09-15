@@ -25,13 +25,15 @@ the cue lands at the moment the OSC message arrived, delay-corrected;
 include it and that exact timeline position is used verbatim instead,
 with no delay correction and no dependence on request timing at all.
 
-The delay correction's decoder-buffer component is an estimate
-(`buffer_segments`, default 3 — see cues.create_cue_now()) rather than a
-measured constant for any particular decoder. It's set once at startup
-via the DECODER_BUFFER_SEGMENTS environment variable (see __init__.py's
-main()) and applies to every /resi/cue/create call for this process —
-recalibrate it there if cues consistently land off from what a decoder
-actually shows.
+Delay correction for the auto-time path is OFF by default — this
+project's actual trigger (ProPresenter over MIDI) fires at the same
+instant as the thing being marked, and live calibration showed any delay
+subtraction there just makes the cue land early. Set CORRECT_FOR_DELAY=true
+(an environment variable, see __init__.py's main()) only for a trigger
+that reacts to something seen on a delayed decoder; its decoder-buffer
+component is an estimate (`buffer_segments`, default 3 — see
+cues.create_cue_now()) rather than a measured constant, tunable via
+DECODER_BUFFER_SEGMENTS.
 
 Every command sends a reply to a fixed target (OSC_REPLY_HOST /
 OSC_REPLY_PORT) rather than back to the sender's address, since the usual
@@ -61,16 +63,26 @@ class OSCApp:
         listen_port=9000,
         reply_host='127.0.0.1',
         reply_port=9001,
+        correct_for_delay=False,
         buffer_segments=3,
     ):
         self.client = client
         self.reply = SimpleUDPClient(reply_host, reply_port)
+        # Whether /resi/cue/create's auto-time path subtracts streaming/
+        # decoder delay at all — see cues.create_cue_now()'s docstring.
+        # Defaults to False: this project's actual trigger (ProPresenter
+        # over MIDI) fires at the same instant as the thing being marked,
+        # and live calibration showed any delay subtraction there just
+        # makes the cue land early. Set CORRECT_FOR_DELAY=true only for a
+        # trigger that reacts to something seen on a delayed decoder.
+        self.correct_for_delay = correct_for_delay
         # How many manifest segments' worth of playback buffering to assume
         # a downstream decoder holds before it renders anything, on top of
-        # the encode/CDN lag pyResi reads off the manifest directly — see
-        # cues.create_cue_now()'s docstring. A rough, calibratable estimate,
-        # not a measured constant; tune via the DECODER_BUFFER_SEGMENTS
-        # environment variable rather than editing this default.
+        # the encode/CDN lag pyResi reads off the manifest directly. Only
+        # used when correct_for_delay is True. A rough, calibratable
+        # estimate, not a measured constant; tune via the
+        # DECODER_BUFFER_SEGMENTS environment variable rather than editing
+        # this default.
         self.buffer_segments = buffer_segments
 
         dispatcher = Dispatcher()
@@ -135,6 +147,7 @@ class OSCApp:
                     name,
                     now=received_at,
                     private_cue=private_cue,
+                    correct_for_delay=self.correct_for_delay,
                     buffer_segments=self.buffer_segments,
                 )
             else:

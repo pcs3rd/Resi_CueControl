@@ -47,29 +47,36 @@ def read_cues_for_event(client, event_id):
     ]
 
 
-def create_cue_now(client, encoder_id, name, *, now=None, private_cue=True, buffer_segments=3):
+def create_cue_now(
+    client, encoder_id, name, *, now=None, private_cue=True,
+    correct_for_delay=False, buffer_segments=3,
+):
     """Create a cue at the real-world moment this was called (pass `now` to
-    override, e.g. in tests), corrected for how far Resi's live playback is
-    currently lagging behind real time.
+    override, e.g. in tests).
 
-    The correction matters because whatever triggers this is almost always
-    reacting to something just watched on a delayed player: the real-world
-    moment being marked happened some number of seconds before the trigger
-    fired, not at the instant it fired. That lag has two components,
-    logged separately below so a mismatch can be traced to one or the
-    other: `streaming_delay` (how far the manifest itself lags behind real
-    time — encoder/CDN packaging lag) and `decoder_buffer_delay` (the
+    Defaults to placing the cue at elapsed time since the event started,
+    with NO delay correction — correct whenever whatever triggers this
+    fires at the same real-world instant as the thing being marked (this
+    project's actual trigger: ProPresenter firing this over MIDI the
+    instant it starts playing a video). Live calibration against that
+    exact trigger showed any delay subtraction at all — encode lag,
+    decoder buffer, or both — made the cue land early by very close to
+    whatever was subtracted; the streaming/decoder delay this project was
+    originally built to correct for just isn't part of that path.
+
+    Pass `correct_for_delay=True` for the OTHER scenario this project can
+    still handle: an operator reacting to something they just watched on
+    a delayed decoder, where the real-world moment being marked genuinely
+    did happen some number of seconds before the trigger fired. In that
+    mode the lag has two components, logged separately so a mismatch can
+    be traced to one or the other: `streaming_delay` (encoder/CDN
+    packaging lag, read off the manifest) and `decoder_buffer_delay` (the
     downstream decoder's own playback buffer, estimated as
-    `buffer_segments` times the manifest's own segment duration — see
-    pyResi's docstrings for both).
-
-    Neither is a measured constant, and `buffer_segments` in particular is
-    a rough estimate (3, by default) rather than anything specific to a
-    real decoder. If cues still land off from what a specific decoder
-    actually shows, this is the number to calibrate — pass a different
-    value here (the OSC server exposes it as the DECODER_BUFFER_SEGMENTS
-    environment variable, see osc_server.py) rather than treating the
-    default as correct.
+    `buffer_segments` times the manifest's segment duration — see
+    pyResi's docstrings for both). Neither is a measured constant, and
+    hasn't been calibrated against a real reacting-to-a-delayed-decoder
+    workflow — only against the simultaneous-trigger one, where the
+    answer turned out to be "don't correct at all".
 
     `private_cue` matches Resi's own field: True (the default, same as
     Studio's own cue editor) hides it from other viewers of the event;
@@ -77,20 +84,31 @@ def create_cue_now(client, encoder_id, name, *, now=None, private_cue=True, buff
     """
     event = _live_event(client, encoder_id)
     now = now or datetime.now(timezone.utc)
-    encode_delay = client.events.streaming_delay(event)
-    buffer_delay = client.events.decoder_buffer_delay(event, buffer_segments)
-    delay = encode_delay + buffer_delay
     start = event_start_time(event)
     elapsed_seconds = (now - start).total_seconds()
-    target_seconds = max(0.0, elapsed_seconds - delay)
-    position = seconds_to_position(target_seconds)
-    log.info(
-        "auto time-adjusted cue %r on encoder %s: encode delay %.3fs + "
-        "decoder buffer %.3fs (%s segments) = total delay %.3fs "
-        "(elapsed %.3fs -> position %s)",
-        name, encoder_id, encode_delay, buffer_delay, buffer_segments, delay,
-        elapsed_seconds, position,
-    )
+
+    if correct_for_delay:
+        encode_delay = client.events.streaming_delay(event)
+        buffer_delay = client.events.decoder_buffer_delay(event, buffer_segments)
+        delay = encode_delay + buffer_delay
+        target_seconds = max(0.0, elapsed_seconds - delay)
+        position = seconds_to_position(target_seconds)
+        log.info(
+            "auto time-adjusted cue %r on encoder %s: encode delay %.3fs + "
+            "decoder buffer %.3fs (%s segments) = total delay %.3fs "
+            "(elapsed %.3fs -> position %s)",
+            name, encoder_id, encode_delay, buffer_delay, buffer_segments, delay,
+            elapsed_seconds, position,
+        )
+    else:
+        target_seconds = max(0.0, elapsed_seconds)
+        position = seconds_to_position(target_seconds)
+        log.info(
+            "auto time cue %r on encoder %s: elapsed %.3fs -> position %s "
+            "(no delay correction)",
+            name, encoder_id, elapsed_seconds, position,
+        )
+
     return client.cues.create(
         event['eventProfileId'], event['uuid'], position, name, private_cue=private_cue
     )
