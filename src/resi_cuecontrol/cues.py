@@ -47,7 +47,7 @@ def read_cues_for_event(client, event_id):
     ]
 
 
-def create_cue_now(client, encoder_id, name, *, now=None):
+def create_cue_now(client, encoder_id, name, *, now=None, private_cue=True):
     """Create a cue at the real-world moment this was called (pass `now` to
     override, e.g. in tests), corrected for how far Resi's live playback is
     currently lagging behind real time.
@@ -56,6 +56,10 @@ def create_cue_now(client, encoder_id, name, *, now=None):
     reacting to something just watched on a delayed player: the real-world
     moment being marked happened `streaming_delay` seconds before the
     trigger fired, not at the instant it fired.
+
+    `private_cue` matches Resi's own field: True (the default, same as
+    Studio's own cue editor) hides it from other viewers of the event;
+    False makes it visible to them.
     """
     event = _live_event(client, encoder_id)
     now = now or datetime.now(timezone.utc)
@@ -69,21 +73,26 @@ def create_cue_now(client, encoder_id, name, *, now=None):
         "(elapsed %.3fs -> position %s)",
         name, encoder_id, delay, elapsed_seconds, position,
     )
-    return client.cues.create(event['eventProfileId'], event['uuid'], position, name)
+    return client.cues.create(
+        event['eventProfileId'], event['uuid'], position, name, private_cue=private_cue
+    )
 
 
-def create_cue_at(client, encoder_id, position_seconds, name):
+def create_cue_at(client, encoder_id, position_seconds, name, *, private_cue=True):
     """Create a cue at an explicit timeline position (seconds from event
     start), bypassing create_cue_now's real-time delay correction entirely.
 
     For testing the create path independent of the delay measurement, or
     for a caller that already knows the exact timeline position it wants
     (e.g. replaying a cue sheet) rather than reacting to something
-    happening right now.
+    happening right now. `private_cue` has the same meaning as on
+    create_cue_now.
     """
     event = _live_event(client, encoder_id)
     position = seconds_to_position(position_seconds)
-    return client.cues.create(event['eventProfileId'], event['uuid'], position, name)
+    return client.cues.create(
+        event['eventProfileId'], event['uuid'], position, name, private_cue=private_cue
+    )
 
 
 def update_cue(client, encoder_id, cue_id, position_seconds, name):

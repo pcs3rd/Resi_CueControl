@@ -14,8 +14,7 @@ values to pass to them:
 |---|---|---|
 | `/resi/cue/read` | `encoder_id` | Lists the live event's cues |
 | `/resi/cue/read_event` | `event_id` | Lists a specific event's cues directly, by its own id |
-| `/resi/cue/create` | `encoder_id, name` | Creates a cue at "now", delay-corrected (see below) |
-| `/resi/cue/create_at` | `encoder_id, position_seconds, name` | Creates a cue at an explicit timeline position — no delay correction |
+| `/resi/cue/create` | `encoder_id, name, visible, [position_seconds]` | Creates a cue — see below for the two modes |
 | `/resi/cue/update` | `encoder_id, cue_id, position_seconds, name` | Moves/renames an existing cue |
 | `/resi/encoders/list` | *(none)* | Lists every encoder on the account |
 | `/resi/events/list` | `encoder_id` | Lists that encoder's events ("videos"), newest first |
@@ -34,6 +33,25 @@ event up directly rather than resolving whichever one is currently live
 on an encoder; it replies on the same `/resi/cue/entry` /
 `/resi/cue/read/done` addresses, with the event id in the encoder_id slot.
 
+`/resi/cue/create`'s `visible` argument (bool) maps to Resi's own
+`privateCue` field, inverted: `False` (matching Studio's own cue editor
+default) hides the cue from other viewers of the event; `True` makes it
+visible to them.
+
+Its fourth argument, `position_seconds`, is optional and switches between
+two different things, not just two ways of specifying the same one:
+
+- **Omitted** — the cue is placed at *the moment the OSC message arrived*
+  at `resi-cuecontrol`, delay-corrected (see below). This is the normal
+  "mark this live moment" usage.
+- **Given** (`position_seconds`) — the cue is placed at that exact
+  timeline position, verbatim, with no delay correction and no
+  dependence on request timing at all. Use this for testing cue creation
+  itself, or for replaying a cue sheet where you already know the exact
+  positions you want.
+
+Both modes reply on the same `/resi/cue/created` address.
+
 The address strings and argument order are placeholders: rename them in
 `src/resi_cuecontrol/osc_server.py` to match whatever's actually sending the
 OSC (Companion, a lighting console, etc.) — nothing else depends on the
@@ -47,11 +65,6 @@ followed by `/resi/encoders/list/done <count>`. `live` is `True` when that
 encoder currently has an event running — that's the `encoder_id` to use
 with the cue commands above.
 
-`/resi/cue/create_at` is the one to reach for when testing cue creation
-itself — a wrong or unvalidated `streaming_delay()` reading can't put the
-cue somewhere unexpected, since there's no delay math involved at all;
-you give it the exact timeline second you want. Both commands reply on
-the same `/resi/cue/created` address.
 
 ## Finding events ("videos")
 
@@ -79,20 +92,28 @@ matching event, then `/resi/events/recent/done <days> <count>`.
 ## Why cue creation corrects for delay
 
 Resi's live playback lags real time — encoder buffering, segmenting, CDN
-propagation. Whatever triggers `/resi/cue/create` is almost always reacting
-to something just watched on a delayed player, so the real-world moment
-being marked actually happened a few seconds *before* the trigger fired, not
-at the instant it fired.
+propagation. Whatever triggers a delay-corrected `/resi/cue/create` (no
+explicit `position_seconds`) is almost always reacting to something just
+watched on a delayed player, so the real-world moment being marked
+actually happened a few seconds *before* the trigger fired, not at the
+instant it fired.
 
-`create_cue_now()` (`src/resi_cuecontrol/cues.py`) corrects for this: it
-measures the current delay via `pyResi`'s `events.streaming_delay()` — which
-reads the live event's HLS manifest and, when the manifest carries
-`EXT-X-PROGRAM-DATE-TIME` tags, compares "now" against the absolute time of
-the most recently encoded segment (falling back to `event.startTime` plus
-summed segment durations if those tags aren't present) — and subtracts that
-delay before turning the timestamp into a cue position. This is measured
-fresh on every cue creation, not a fixed calibrated constant, since the
-delay isn't guaranteed stable.
+`create_cue_now()` (`src/resi_cuecontrol/cues.py`) corrects for this. The
+"now" it corrects from is the moment the OSC message arrived —
+`osc_server.py` captures that timestamp as the very first thing `_on_create`
+does, before making any Resi API calls, so the network round trip to
+resolve the live event never gets baked into the cue position. From
+there it measures the current delay via `pyResi`'s
+`events.streaming_delay()` — which reads the live event's HLS manifest
+and, when the manifest carries `EXT-X-PROGRAM-DATE-TIME` tags, compares
+the request time against the absolute time of the most recently encoded
+segment (falling back to `event.startTime` plus summed segment durations
+if those tags aren't present) — and subtracts that delay before turning
+the timestamp into a cue position. This is measured fresh on every cue
+creation, not a fixed calibrated constant, since the delay isn't
+guaranteed stable. `resi_cuecontrol.cues` logs the delay, elapsed time,
+and resulting position at `INFO` on every such create, so you can see the
+correction happen in the console.
 
 ## Setup
 

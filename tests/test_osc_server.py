@@ -16,10 +16,14 @@ REPLY_PORT = 9191
 
 
 class FakeCuesAPI:
+    def __init__(self):
+        self.created_kwargs = []
+
     def list(self, event_profile_id, event_id):
         return [{"uuid": "c1", "position": "0:00:05.000", "name": "Start"}]
 
     def create(self, event_profile_id, event_id, position, name, **kw):
+        self.created_kwargs.append(kw)
         return {"uuid": "newid", "position": position, "name": name}
 
     def update(self, *a, **kw):
@@ -110,8 +114,8 @@ def test_osc_commands_round_trip():
 
     client = SimpleUDPClient("127.0.0.1", LISTEN_PORT)
     client.send_message("/resi/cue/read", ["enc1"])
-    client.send_message("/resi/cue/create", ["enc1", "NewCue"])
-    client.send_message("/resi/cue/create_at", ["enc1", 30.0, "AtCue"])
+    client.send_message("/resi/cue/create", ["enc1", "NewCue", False])
+    client.send_message("/resi/cue/create", ["enc1", "AtCue", True, 30.0])
     client.send_message("/resi/cue/update", ["enc1", "c1", 42.0, "Renamed"])
 
     stopper.join(timeout=3.0)
@@ -137,6 +141,12 @@ def test_osc_commands_round_trip():
 
     updated = next(args for addr, args in received if addr == "/resi/cue/updated")
     assert updated == ("enc1", "c1", "00:00:42.000", "Renamed")
+
+    # visible=False -> private_cue=True, visible=True -> private_cue=False
+    assert app.client.cues.created_kwargs == [
+        {"private_cue": True},
+        {"private_cue": False},
+    ]
 
 
 def test_unknown_encoder_replies_with_error_not_silence():

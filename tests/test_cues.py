@@ -11,6 +11,7 @@ from resi_cuecontrol import cues
 class FakeCuesAPI:
     def __init__(self, initial=None):
         self.created = []
+        self.created_kwargs = []
         self.updated = []
         self._cues = list(initial or [])
 
@@ -21,6 +22,7 @@ class FakeCuesAPI:
         cue = {"uuid": "new-uuid", "position": position, "name": name}
         self._cues.append(cue)
         self.created.append((event_profile_id, event_id, position, name))
+        self.created_kwargs.append(kw)
         return cue
 
     def update(self, event_profile_id, event_id, cue_id, position, name, **kw):
@@ -120,6 +122,32 @@ def test_create_cue_at_ignores_streaming_delay():
     cues.create_cue_at(client, "enc1", 30.0, "At 30s")
 
     assert client.cues.created[-1] == ("prof1", "evt1", "00:00:30.000", "At 30s")
+
+
+def test_create_cue_now_defaults_to_private():
+    now = datetime(2026, 9, 10, 14, 1, 0, tzinfo=timezone.utc)
+    client = FakeClient(EVENT, delay=0.0)
+
+    cues.create_cue_now(client, "enc1", "Test Cue", now=now)
+
+    assert client.cues.created_kwargs[-1]["private_cue"] is True
+
+
+def test_create_cue_now_can_be_made_visible():
+    now = datetime(2026, 9, 10, 14, 1, 0, tzinfo=timezone.utc)
+    client = FakeClient(EVENT, delay=0.0)
+
+    cues.create_cue_now(client, "enc1", "Test Cue", now=now, private_cue=False)
+
+    assert client.cues.created_kwargs[-1]["private_cue"] is False
+
+
+def test_create_cue_at_can_be_made_visible():
+    client = FakeClient(EVENT)
+
+    cues.create_cue_at(client, "enc1", 30.0, "At 30s", private_cue=False)
+
+    assert client.cues.created_kwargs[-1]["private_cue"] is False
 
 
 def test_update_cue_sends_seconds_as_position_string():

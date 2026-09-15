@@ -4,8 +4,7 @@ Listens for three commands and translates them into pyResi calls:
 
     /resi/cue/read       <encoder_id>
     /resi/cue/read_event <event_id>
-    /resi/cue/create    <encoder_id> <name>
-    /resi/cue/create_at <encoder_id> <position_seconds> <name>
+    /resi/cue/create    <encoder_id> <name> <visible> [position_seconds]
     /resi/cue/update    <encoder_id> <cue_id> <position_seconds> <name>
     /resi/encoders/list  (no args)
     /resi/events/list    <encoder_id>
@@ -17,6 +16,15 @@ to match whatever's actually sending the OSC (Companion, a lighting
 console, etc.); nothing else in this project depends on the exact
 spelling, just the encoder_id/name/cue_id/position_seconds shapes.
 
+`visible` (bool) maps to Resi's own `privateCue` field, inverted —
+`False` (matching Studio's own cue editor default) hides the cue from
+other viewers of the event; `True` makes it visible to them.
+
+`/resi/cue/create`'s trailing `position_seconds` is optional: omit it and
+the cue lands at the moment the OSC message arrived, delay-corrected;
+include it and that exact timeline position is used verbatim instead,
+with no delay correction and no dependence on request timing at all.
+
 Every command sends a reply to a fixed target (OSC_REPLY_HOST /
 OSC_REPLY_PORT) rather than back to the sender's address, since the usual
 setup here is fixed IPs on both ends. On error, callers get
@@ -24,6 +32,7 @@ setup here is fixed IPs on both ends. On error, callers get
 """
 
 import logging
+from datetime import datetime, timezone
 
 from pythonosc.dispatcher import Dispatcher
 from pythonosc.osc_server import BlockingOSCUDPServer
@@ -52,7 +61,6 @@ class OSCApp:
         dispatcher.map('/resi/cue/read', self._on_read)
         dispatcher.map('/resi/cue/read_event', self._on_read_event)
         dispatcher.map('/resi/cue/create', self._on_create)
-        dispatcher.map('/resi/cue/create_at', self._on_create_at)
         dispatcher.map('/resi/cue/update', self._on_update)
         dispatcher.map('/resi/encoders/list', self._on_list_encoders)
         dispatcher.map('/resi/events/list', self._on_list_events)
@@ -96,23 +104,22 @@ class OSCApp:
             )
         self.reply.send_message('/resi/cue/read/done', [event_id, len(entries)])
 
-    def _on_create(self, address, encoder_id, name):
+    def _on_create(self, address, encoder_id, name, visible, *rest):
+        # Capture the arrival time before doing anything else — resolving
+        # the live event below is a network round trip, and using "now" at
+        # that later point would bake its latency into the cue position.
+        received_at = datetime.now(timezone.utc)
+        position_seconds = rest[0] if rest else None
+        private_cue = not visible
         try:
-            cue = cues.create_cue_now(self.client, encoder_id, name)
-        except Exception as exc:
-            self._error(encoder_id, str(exc))
-            return
-        if cue is None:
-            self._error(encoder_id, 'cue created but could not be read back to confirm')
-            return
-        self.reply.send_message(
-            '/resi/cue/created',
-            [encoder_id, cue.get('uuid') or '', position_to_seconds(cue['position']), name],
-        )
-
-    def _on_create_at(self, address, encoder_id, position_seconds, name):
-        try:
-            cue = cues.create_cue_at(self.client, encoder_id, position_seconds, name)
+            if position_seconds is None:
+                cue = cues.create_cue_now(
+                    self.client, encoder_id, name, now=received_at, private_cue=private_cue
+                )
+            else:
+                cue = cues.create_cue_at(
+                    self.client, encoder_id, position_seconds, name, private_cue=private_cue
+                )
         except Exception as exc:
             self._error(encoder_id, str(exc))
             return
