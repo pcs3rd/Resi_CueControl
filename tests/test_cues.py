@@ -36,6 +36,9 @@ class FakeEventsAPI:
     def current_for_encoder(self, encoder_id):
         return self._event
 
+    def get(self, event_id):
+        return self._event
+
     def streaming_delay(self, event):
         return self._delay
 
@@ -65,6 +68,15 @@ def test_read_cues_returns_position_in_seconds():
         ("c1", 5.0, "Start"),
         ("c2", 10.0, "Mid"),
     ]
+
+
+def test_read_cues_for_event_uses_events_get_directly():
+    client = FakeClient(
+        EVENT,
+        initial_cues=[{"uuid": "c1", "position": "0:00:05.000", "name": "Start"}],
+    )
+
+    assert cues.read_cues_for_event(client, "evt1") == [("c1", 5.0, "Start")]
 
 
 def test_create_cue_now_subtracts_streaming_delay():

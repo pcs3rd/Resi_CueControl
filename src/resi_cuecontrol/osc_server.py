@@ -2,7 +2,8 @@
 
 Listens for three commands and translates them into pyResi calls:
 
-    /resi/cue/read      <encoder_id>
+    /resi/cue/read       <encoder_id>
+    /resi/cue/read_event <event_id>
     /resi/cue/create    <encoder_id> <name>
     /resi/cue/create_at <encoder_id> <position_seconds> <name>
     /resi/cue/update    <encoder_id> <cue_id> <position_seconds> <name>
@@ -48,6 +49,7 @@ class OSCApp:
 
         dispatcher = Dispatcher()
         dispatcher.map('/resi/cue/read', self._on_read)
+        dispatcher.map('/resi/cue/read_event', self._on_read_event)
         dispatcher.map('/resi/cue/create', self._on_create)
         dispatcher.map('/resi/cue/create_at', self._on_create_at)
         dispatcher.map('/resi/cue/update', self._on_update)
@@ -79,6 +81,18 @@ class OSCApp:
                 '/resi/cue/entry', [encoder_id, cue_id, position_seconds, name or '']
             )
         self.reply.send_message('/resi/cue/read/done', [encoder_id, len(entries)])
+
+    def _on_read_event(self, address, event_id):
+        try:
+            entries = cues.read_cues_for_event(self.client, event_id)
+        except Exception as exc:
+            self._error(event_id, str(exc))
+            return
+        for cue_id, position_seconds, name in entries:
+            self.reply.send_message(
+                '/resi/cue/entry', [event_id, cue_id, position_seconds, name or '']
+            )
+        self.reply.send_message('/resi/cue/read/done', [event_id, len(entries)])
 
     def _on_create(self, address, encoder_id, name):
         try:

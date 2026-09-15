@@ -29,6 +29,21 @@ def read_cues(client, encoder_id):
     ]
 
 
+def read_cues_for_event(client, event_id):
+    """The given event's cues, as (uuid, position_seconds, name) tuples in
+    timeline order — reads a specific event/video directly by its own id,
+    bypassing which event is currently live on any encoder. Useful for
+    checking a video you already have the id for (e.g. from its Studio
+    URL), finished or not.
+    """
+    event = client.events.get(event_id)
+    cues = client.cues.list(event['eventProfileId'], event['uuid'])
+    return [
+        (cue.get('uuid'), position_to_seconds(cue['position']), cue.get('name'))
+        for cue in cues
+    ]
+
+
 def create_cue_now(client, encoder_id, name, *, now=None):
     """Create a cue at the real-world moment this was called (pass `now` to
     override, e.g. in tests), corrected for how far Resi's live playback is

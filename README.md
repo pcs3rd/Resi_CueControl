@@ -13,6 +13,7 @@ values to pass to them:
 | Address | Args | Effect |
 |---|---|---|
 | `/resi/cue/read` | `encoder_id` | Lists the live event's cues |
+| `/resi/cue/read_event` | `event_id` | Lists a specific event's cues directly, by its own id |
 | `/resi/cue/create` | `encoder_id, name` | Creates a cue at "now", delay-corrected (see below) |
 | `/resi/cue/create_at` | `encoder_id, position_seconds, name` | Creates a cue at an explicit timeline position — no delay correction |
 | `/resi/cue/update` | `encoder_id, cue_id, position_seconds, name` | Moves/renames an existing cue |
@@ -25,6 +26,13 @@ rather than back to the sender — `/resi/cue/entry`, `/resi/cue/read/done`,
 `/resi/cue/created`, `/resi/cue/updated`, `/resi/encoder/entry` +
 `/resi/encoders/list/done`, `/resi/event/entry` + `/resi/events/list/done`,
 `/resi/event/current`, or `/resi/cue/error` on failure.
+`/resi/cue/read_event` is the one to reach for when you already have a
+specific event id — e.g. from its Studio URL
+(`studio.resi.io/media/encoder-videos/<event id>`) — since it looks that
+event up directly rather than resolving whichever one is currently live
+on an encoder; it replies on the same `/resi/cue/entry` /
+`/resi/cue/read/done` addresses, with the event id in the encoder_id slot.
+
 The address strings and argument order are placeholders: rename them in
 `src/resi_cuecontrol/osc_server.py` to match whatever's actually sending the
 OSC (Companion, a lighting console, etc.) — nothing else depends on the
