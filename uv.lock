@@ -162,7 +162,7 @@ wheels = [
 [[package]]
 name = "pyresi"
 version = "0.2.0"
-source = { git = "https://github.com/pcs3rd/pyResi#c5b56b4e1c9598cf08606be793300f297fb063a1" }
+source = { git = "https://github.com/pcs3rd/pyResi#05ed02f1c8012929b3617dc192abbfb60178af98" }
 dependencies = [
     { name = "requests" },
 ]
