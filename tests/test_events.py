@@ -1,5 +1,7 @@
 """Unit tests for event discovery — no network, no real Resi account."""
 
+from datetime import datetime, timedelta, timezone
+
 from resi_cuecontrol import events
 
 
@@ -12,9 +14,10 @@ class FakeEncodersAPI:
 
 
 class FakeEventsAPI:
-    def __init__(self, events_by_encoder, current_by_encoder):
+    def __init__(self, events_by_encoder, current_by_encoder, all_events=None):
         self._events_by_encoder = events_by_encoder
         self._current_by_encoder = current_by_encoder
+        self._all_events = all_events or []
 
     def for_encoder(self, encoder_id):
         return list(self._events_by_encoder.get(encoder_id, []))
@@ -22,11 +25,14 @@ class FakeEventsAPI:
     def current_for_encoder(self, encoder_id):
         return self._current_by_encoder.get(encoder_id)
 
+    def list(self):
+        return list(self._all_events)
+
 
 class FakeClient:
-    def __init__(self, statuses, events_by_encoder, current_by_encoder):
+    def __init__(self, statuses, events_by_encoder, current_by_encoder, all_events=None):
         self.encoders = FakeEncodersAPI(statuses)
-        self.events = FakeEventsAPI(events_by_encoder, current_by_encoder)
+        self.events = FakeEventsAPI(events_by_encoder, current_by_encoder, all_events)
 
 
 def test_list_events_marks_current_one_active_and_sorts_newest_first():
@@ -76,3 +82,42 @@ def test_current_event_returns_tuple_when_streaming():
     )
 
     assert events.current_event(client, "enc1") == ("evt9", "Sunday 11am", "2026-09-15T14:00:00Z")
+
+
+def _iso(dt):
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def test_recent_events_filters_by_start_time_and_groups_by_encoder():
+    now = datetime.now(timezone.utc)
+    recent = now - timedelta(days=1)
+    old = now - timedelta(days=30)
+
+    client = FakeClient(
+        statuses={},
+        events_by_encoder={},
+        current_by_encoder={},
+        all_events=[
+            {"uuid": "evt1", "name": "Recent A", "startTime": _iso(recent), "encoderId": "enc1"},
+            {"uuid": "evt2", "name": "Too Old", "startTime": _iso(old), "encoderId": "enc1"},
+            {"uuid": "evt3", "name": "Recent B", "startTime": _iso(now), "encoderId": "enc2"},
+        ],
+    )
+
+    result = events.recent_events(client, days=7)
+
+    assert result == {
+        "enc1": [("evt1", "Recent A", _iso(recent))],
+        "enc2": [("evt3", "Recent B", _iso(now))],
+    }
+
+
+def test_recent_events_skips_events_with_no_start_time():
+    client = FakeClient(
+        statuses={},
+        events_by_encoder={},
+        current_by_encoder={},
+        all_events=[{"uuid": "evt1", "name": "No start time", "encoderId": "enc1"}],
+    )
+
+    assert events.recent_events(client, days=7) == {}

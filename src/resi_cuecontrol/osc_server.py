@@ -10,6 +10,7 @@ Listens for three commands and translates them into pyResi calls:
     /resi/encoders/list  (no args)
     /resi/events/list    <encoder_id>
     /resi/events/current <encoder_id>
+    /resi/events/recent  <days>
 
 The address strings and argument order here are placeholders — rename them
 to match whatever's actually sending the OSC (Companion, a lighting
@@ -56,6 +57,7 @@ class OSCApp:
         dispatcher.map('/resi/encoders/list', self._on_list_encoders)
         dispatcher.map('/resi/events/list', self._on_list_events)
         dispatcher.map('/resi/events/current', self._on_current_event)
+        dispatcher.map('/resi/events/recent', self._on_recent_events)
         dispatcher.set_default_handler(self._on_unmatched)
 
         self.server = BlockingOSCUDPServer((listen_host, listen_port), dispatcher)
@@ -168,6 +170,22 @@ class OSCApp:
         self.reply.send_message(
             '/resi/event/current', [encoder_id, event_id or '', name or '', start_time or '']
         )
+
+    def _on_recent_events(self, address, days):
+        try:
+            grouped = events.recent_events(self.client, days)
+        except Exception as exc:
+            self._error('', str(exc))
+            return
+        total = 0
+        for encoder_id, entries in grouped.items():
+            for event_id, name, start_time in entries:
+                self.reply.send_message(
+                    '/resi/recent_event/entry',
+                    [encoder_id or '', event_id or '', name or '', start_time or ''],
+                )
+                total += 1
+        self.reply.send_message('/resi/events/recent/done', [days, total])
 
     def _on_unmatched(self, address, *args):
         log.warning('unhandled OSC address %s %r', address, args)

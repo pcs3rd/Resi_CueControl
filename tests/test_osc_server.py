@@ -27,11 +27,21 @@ class FakeCuesAPI:
 
 
 class EventsListMixin:
-    """Adds for_encoder support to FakeEventsAPI for the events/list test."""
+    """Adds for_encoder/list support to FakeEventsAPI for the events tests."""
 
     def for_encoder(self, encoder_id):
         return [
             {"uuid": "evt1", "name": "Sunday 11am", "startTime": "2026-09-10T14:00:00Z"}
+        ]
+
+    def list(self):
+        return [
+            {
+                "uuid": "evt1",
+                "name": "Sunday 11am",
+                "startTime": "2026-09-10T14:00:00Z",
+                "encoderId": "enc1",
+            }
         ]
 
 
@@ -226,3 +236,34 @@ def test_events_list_and_current_round_trip():
 
     current = next(args for addr, args in received if addr == "/resi/event/current")
     assert current == ("enc1", "evt1", "Sunday 11am", "2026-09-10T14:00:00Z")
+
+
+def test_recent_events_round_trip():
+    server, received, stopper = _collect_replies(REPLY_PORT + 4, count=2)
+
+    app = OSCApp(
+        FakeClient(),
+        listen_host="127.0.0.1",
+        listen_port=LISTEN_PORT + 4,
+        reply_host="127.0.0.1",
+        reply_port=REPLY_PORT + 4,
+    )
+    app_thread = threading.Thread(target=app.serve_forever, daemon=True)
+    app_thread.start()
+    time.sleep(0.2)
+
+    client = SimpleUDPClient("127.0.0.1", LISTEN_PORT + 4)
+    client.send_message("/resi/events/recent", [3650.0])
+
+    stopper.join(timeout=3.0)
+    app.server.shutdown()
+
+    addresses = [addr for addr, _ in received]
+    assert "/resi/recent_event/entry" in addresses
+    assert "/resi/events/recent/done" in addresses
+
+    entry = next(args for addr, args in received if addr == "/resi/recent_event/entry")
+    assert entry == ("enc1", "evt1", "Sunday 11am", "2026-09-10T14:00:00Z")
+
+    done = next(args for addr, args in received if addr == "/resi/events/recent/done")
+    assert done == (3650.0, 1)

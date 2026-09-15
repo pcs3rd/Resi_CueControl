@@ -20,6 +20,7 @@ values to pass to them:
 | `/resi/encoders/list` | *(none)* | Lists every encoder on the account |
 | `/resi/events/list` | `encoder_id` | Lists that encoder's events ("videos"), newest first |
 | `/resi/events/current` | `encoder_id` | The encoder's current/active event, if it's live |
+| `/resi/events/recent` | `days` | Every event across the account started in the last `days` days, grouped by encoder |
 
 Every command replies to a fixed target (`OSC_REPLY_HOST`/`OSC_REPLY_PORT`)
 rather than back to the sender — `/resi/cue/entry`, `/resi/cue/read/done`,
@@ -67,6 +68,13 @@ whichever one is that encoder's current live event right now.
 `/resi/events/current <encoder_id>` skips straight to that one: replies
 with `/resi/event/current <encoder_id> <uuid> <name> <start_time>`, or
 `/resi/cue/error` if the encoder isn't currently streaming.
+
+`/resi/events/recent <days>` is account-wide rather than per-encoder — it
+fetches every event (one request, no server-side date filter exists) and
+keeps whichever ones started within the last `days` days, grouped by
+encoder. Replies with one
+`/resi/recent_event/entry <encoder_id> <uuid> <name> <start_time>` per
+matching event, then `/resi/events/recent/done <days> <count>`.
 
 ## Why cue creation corrects for delay
 
