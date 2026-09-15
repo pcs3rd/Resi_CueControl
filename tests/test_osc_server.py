@@ -136,7 +136,7 @@ def test_osc_commands_round_trip():
     assert at_cue[2] == 30.0
 
     updated = next(args for addr, args in received if addr == "/resi/cue/updated")
-    assert updated == ("enc1", "c1", "0:00:42.000", "Renamed")
+    assert updated == ("enc1", "c1", "00:00:42.000", "Renamed")
 
 
 def test_unknown_encoder_replies_with_error_not_silence():

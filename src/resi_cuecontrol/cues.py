@@ -1,9 +1,12 @@
 """Cue business logic: turns OSC-triggered read/create/update requests into
 pyResi calls, with real-time correction for Resi's live streaming delay."""
 
+import logging
 from datetime import datetime, timezone
 
 from pyResi import event_start_time, position_to_seconds, seconds_to_position
+
+log = logging.getLogger('resi_cuecontrol.cues')
 
 
 class EncoderNotLive(Exception):
@@ -58,9 +61,14 @@ def create_cue_now(client, encoder_id, name, *, now=None):
     now = now or datetime.now(timezone.utc)
     delay = client.events.streaming_delay(event)
     start = event_start_time(event)
-    target_seconds = (now - start).total_seconds() - delay
-    target_seconds = max(0.0, target_seconds)
+    elapsed_seconds = (now - start).total_seconds()
+    target_seconds = max(0.0, elapsed_seconds - delay)
     position = seconds_to_position(target_seconds)
+    log.info(
+        "auto time-adjusted cue %r on encoder %s: streaming delay %.3fs "
+        "(elapsed %.3fs -> position %s)",
+        name, encoder_id, delay, elapsed_seconds, position,
+    )
     return client.cues.create(event['eventProfileId'], event['uuid'], position, name)
 
 

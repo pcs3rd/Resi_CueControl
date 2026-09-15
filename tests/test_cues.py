@@ -86,7 +86,7 @@ def test_create_cue_now_subtracts_streaming_delay():
 
     cues.create_cue_now(client, "enc1", "Test Cue", now=now)
 
-    assert client.cues.created[-1] == ("prof1", "evt1", "0:00:52.000", "Test Cue")
+    assert client.cues.created[-1] == ("prof1", "evt1", "00:00:52.000", "Test Cue")
 
 
 def test_create_cue_now_clamps_to_zero_when_delay_exceeds_elapsed():
@@ -96,7 +96,20 @@ def test_create_cue_now_clamps_to_zero_when_delay_exceeds_elapsed():
 
     cues.create_cue_now(client, "enc1", "Edge", now=now)
 
-    assert client.cues.created[-1][2] == "0:00:00.000"
+    assert client.cues.created[-1][2] == "00:00:00.000"
+
+
+def test_create_cue_now_logs_the_delay_it_applied(caplog):
+    now = datetime(2026, 9, 10, 14, 1, 0, tzinfo=timezone.utc)
+    client = FakeClient(EVENT, delay=8.0)
+
+    with caplog.at_level("INFO", logger="resi_cuecontrol.cues"):
+        cues.create_cue_now(client, "enc1", "Test Cue", now=now)
+
+    assert len(caplog.records) == 1
+    message = caplog.records[0].getMessage()
+    assert "8.000" in message
+    assert "00:00:52.000" in message
 
 
 def test_create_cue_at_ignores_streaming_delay():
@@ -106,7 +119,7 @@ def test_create_cue_at_ignores_streaming_delay():
 
     cues.create_cue_at(client, "enc1", 30.0, "At 30s")
 
-    assert client.cues.created[-1] == ("prof1", "evt1", "0:00:30.000", "At 30s")
+    assert client.cues.created[-1] == ("prof1", "evt1", "00:00:30.000", "At 30s")
 
 
 def test_update_cue_sends_seconds_as_position_string():
@@ -114,8 +127,8 @@ def test_update_cue_sends_seconds_as_position_string():
 
     position = cues.update_cue(client, "enc1", "c1", 12.5, "Renamed")
 
-    assert position == "0:00:12.500"
-    assert client.cues.updated[-1] == ("prof1", "evt1", "c1", "0:00:12.500", "Renamed")
+    assert position == "00:00:12.500"
+    assert client.cues.updated[-1] == ("prof1", "evt1", "c1", "00:00:12.500", "Renamed")
 
 
 def test_encoder_not_live_raises_for_read_create_and_update():
