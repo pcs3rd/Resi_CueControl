@@ -216,6 +216,28 @@ a non-root user. Rebuild (`docker build`, no cache needed) after bumping
 `uv.lock` per the section below — the image bakes in whatever commit was
 pinned at build time, same as the Nix devShell does.
 
+### Published image
+
+`.github/workflows/docker-publish.yml` builds this same `Dockerfile` and
+pushes it to `ghcr.io/pcs3rd/resi-cuecontrol` whenever a **GitHub Release**
+is published — tagged both `latest` and with the release's own version
+(e.g. a release tagged `v1.2.0` publishes `:v1.2.0`, `:1.2`, and
+`:latest`). A push to `main` or a pull request that touches the
+Dockerfile/dependencies/source only *builds* (no push, no registry
+credentials needed) as a CI check, so a broken image can't reach a
+release in the first place; `workflow_dispatch` builds and pushes
+on-demand from whatever branch you run it on, tagged by commit SHA only
+(no `latest`, since that's reserved for actual releases).
+
+To publish a new image: cut a GitHub Release (tag `vX.Y.Z`) once
+`uv.lock`/`Dockerfile`/source are where you want them — the workflow does
+the rest. No local `docker build`/`docker push` needed for a real
+deployment; that's only for local testing.
+
+```bash
+docker pull ghcr.io/pcs3rd/resi-cuecontrol:latest
+```
+
 ## Picking up pyResi changes
 
 `pyresi` is a pinned git dependency, not editable — it won't pick up new
