@@ -37,7 +37,9 @@ def main() -> None:
         client,
         listen_host=os.environ.get("OSC_LISTEN_HOST", "0.0.0.0"),
         listen_port=int(os.environ.get("OSC_LISTEN_PORT", "9000")),
-        reply_host=os.environ.get("OSC_REPLY_HOST", "127.0.0.1"),
+        # Reply target is inferred per-request from the sender's IP (see
+        # osc_server.OSCApp._reply_for) rather than a configured host —
+        # only the port is fixed.
         reply_port=int(os.environ.get("OSC_REPLY_PORT", "9001")),
         # Off by default: this project's actual trigger (ProPresenter over
         # MIDI) fires at the same real-world instant as the thing being

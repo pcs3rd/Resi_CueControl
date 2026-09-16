@@ -21,8 +21,8 @@ values to pass to them:
 | `/resi/events/current` | `encoder_id` | The encoder's current/active event, if it's live |
 | `/resi/events/recent` | `days` | Every event across the account started in the last `days` days, grouped by encoder |
 
-Every command replies to a fixed target (`OSC_REPLY_HOST`/`OSC_REPLY_PORT`)
-rather than back to the sender — `/resi/cue/entry`, `/resi/cue/read/done`,
+Every command replies to whichever IP address the request came from, on a
+fixed `OSC_REPLY_PORT` — `/resi/cue/entry`, `/resi/cue/read/done`,
 `/resi/cue/created`, `/resi/cue/updated`, `/resi/encoder/entry` +
 `/resi/encoders/list/done`, `/resi/event/entry` + `/resi/events/list/done`,
 `/resi/event/current`, or `/resi/cue/error` on failure.
@@ -165,7 +165,12 @@ Environment variables, all optional except the Resi credentials:
 
 - `RESI_TOKEN` or `RESI_USERNAME`/`RESI_PASSWORD` — authentication
 - `OSC_LISTEN_HOST` (default `0.0.0.0`), `OSC_LISTEN_PORT` (default `9000`)
-- `OSC_REPLY_HOST` (default `127.0.0.1`), `OSC_REPLY_PORT` (default `9001`)
+- `OSC_REPLY_PORT` (default `9001`) — replies go back to whichever IP the
+  request came from, on this port. This assumes whatever's sending these
+  commands listens for replies on this same port at its own IP, using a
+  single fixed local port for both send and receive — if your sender uses
+  a different (e.g. ephemeral) port to send from than the one it listens
+  on, replies won't reach it.
 - `LOG_LEVEL` (default `INFO`)
 - `CORRECT_FOR_DELAY` (default `false`) — turns on delay-corrected
   `/resi/cue/create` (subtracting encode + decoder buffer lag) for a

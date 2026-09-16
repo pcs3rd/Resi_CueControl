@@ -30,7 +30,7 @@ project's actual trigger (ProPresenter over MIDI) fires at the same
 instant as the thing being marked, and live calibration showed any delay
 subtraction there just makes the cue land early. Set CORRECT_FOR_DELAY=true
 (an environment variable, see __init__.py's main()) only for a trigger
-that reacts to something seen on a delayed decoder; its decoder-buffer
+that reacts to something seen on a delayed decoder. Its decoder-buffer
 component is an estimate (`buffer_segments`, default 3 — see
 cues.create_cue_now()) rather than a measured constant, tunable via
 DECODER_BUFFER_SEGMENTS.
@@ -41,9 +41,15 @@ earlier, negative moves it later. Use this for small real-world
 adjustments (e.g. "it's landing half a second late") rather than
 recalibrating the delay-correction math itself.
 
-Every command sends a reply to a fixed target (OSC_REPLY_HOST /
-OSC_REPLY_PORT) rather than back to the sender's address, since the usual
-setup here is fixed IPs on both ends. On error, callers get
+Every command replies to the IP address the request came from, on a
+fixed OSC_REPLY_PORT — the reply target is inferred from each incoming
+packet's source address rather than configured as a separate fixed host,
+since this deployment doesn't want to hardcode a reply host per instance.
+This relies on the sender listening for replies on OSC_REPLY_PORT at its
+own IP; if whatever sends these commands uses a different local port for
+listening than the one it sends from, replies won't reach it — confirm
+your OSC sender binds a single fixed port for both send and receive
+before relying on this. On error, callers get
 `/resi/cue/error <encoder_id> <message>` instead of silence.
 """
 
@@ -67,14 +73,16 @@ class OSCApp:
         client,
         listen_host='0.0.0.0',
         listen_port=9000,
-        reply_host='127.0.0.1',
         reply_port=9001,
         correct_for_delay=False,
         buffer_segments=3,
         offset_seconds=0.0,
     ):
         self.client = client
-        self.reply = SimpleUDPClient(reply_host, reply_port)
+        # Reply target is inferred per-request from the sender's IP (see
+        # _reply_for/needs_reply_address below) rather than fixed at
+        # startup — only the port is fixed.
+        self.reply_port = reply_port
         # Whether /resi/cue/create's auto-time path subtracts streaming/
         # decoder delay at all — see cues.create_cue_now()'s docstring.
         # Defaults to False: this project's actual trigger (ProPresenter
@@ -99,14 +107,14 @@ class OSCApp:
         self.offset_seconds = offset_seconds
 
         dispatcher = Dispatcher()
-        dispatcher.map('/resi/cue/read', self._on_read)
-        dispatcher.map('/resi/cue/read_event', self._on_read_event)
-        dispatcher.map('/resi/cue/create', self._on_create)
-        dispatcher.map('/resi/cue/update', self._on_update)
-        dispatcher.map('/resi/encoders/list', self._on_list_encoders)
-        dispatcher.map('/resi/events/list', self._on_list_events)
-        dispatcher.map('/resi/events/current', self._on_current_event)
-        dispatcher.map('/resi/events/recent', self._on_recent_events)
+        dispatcher.map('/resi/cue/read', self._on_read, needs_reply_address=True)
+        dispatcher.map('/resi/cue/read_event', self._on_read_event, needs_reply_address=True)
+        dispatcher.map('/resi/cue/create', self._on_create, needs_reply_address=True)
+        dispatcher.map('/resi/cue/update', self._on_update, needs_reply_address=True)
+        dispatcher.map('/resi/encoders/list', self._on_list_encoders, needs_reply_address=True)
+        dispatcher.map('/resi/events/list', self._on_list_events, needs_reply_address=True)
+        dispatcher.map('/resi/events/current', self._on_current_event, needs_reply_address=True)
+        dispatcher.map('/resi/events/recent', self._on_recent_events, needs_reply_address=True)
         dispatcher.set_default_handler(self._on_unmatched)
 
         self.server = BlockingOSCUDPServer((listen_host, listen_port), dispatcher)
@@ -115,41 +123,52 @@ class OSCApp:
         log.info('listening on %s', self.server.server_address)
         self.server.serve_forever()
 
-    # ---------- handlers ----------
-    # python-osc calls each of these as handler(address, *osc_args) — the
-    # dispatcher itself does no argument validation, so a malformed message
-    # (wrong arg count/type) surfaces here as a TypeError, caught below and
-    # reported the same way as any other failure.
+    def _reply_for(self, client_address):
+        """A reply client aimed at whoever just sent us a request: their
+        IP (from the incoming packet), our fixed reply port. Built fresh
+        per-request rather than cached, since the sender's IP can differ
+        from one message to the next."""
+        return SimpleUDPClient(client_address[0], self.reply_port)
 
-    def _on_read(self, address, encoder_id):
+    # ---------- handlers ----------
+    # python-osc calls each of these as handler(client_address, address,
+    # *osc_args) since every mapping above sets needs_reply_address=True —
+    # the dispatcher itself does no argument validation, so a malformed
+    # message (wrong arg count/type) surfaces here as a TypeError, caught
+    # below and reported the same way as any other failure.
+
+    def _on_read(self, client_address, address, encoder_id):
+        reply = self._reply_for(client_address)
         try:
             entries = cues.read_cues(self.client, encoder_id)
         except Exception as exc:
-            self._error(encoder_id, str(exc))
+            self._error(reply, encoder_id, str(exc))
             return
         for cue_id, position_seconds, name in entries:
-            self.reply.send_message(
+            reply.send_message(
                 '/resi/cue/entry', [encoder_id, cue_id, position_seconds, name or '']
             )
-        self.reply.send_message('/resi/cue/read/done', [encoder_id, len(entries)])
+        reply.send_message('/resi/cue/read/done', [encoder_id, len(entries)])
 
-    def _on_read_event(self, address, event_id):
+    def _on_read_event(self, client_address, address, event_id):
+        reply = self._reply_for(client_address)
         try:
             entries = cues.read_cues_for_event(self.client, event_id)
         except Exception as exc:
-            self._error(event_id, str(exc))
+            self._error(reply, event_id, str(exc))
             return
         for cue_id, position_seconds, name in entries:
-            self.reply.send_message(
+            reply.send_message(
                 '/resi/cue/entry', [event_id, cue_id, position_seconds, name or '']
             )
-        self.reply.send_message('/resi/cue/read/done', [event_id, len(entries)])
+        reply.send_message('/resi/cue/read/done', [event_id, len(entries)])
 
-    def _on_create(self, address, encoder_id, name, visible, *rest):
+    def _on_create(self, client_address, address, encoder_id, name, visible, *rest):
         # Capture the arrival time before doing anything else — resolving
         # the live event below is a network round trip, and using "now" at
         # that later point would bake its latency into the cue position.
         received_at = datetime.now(timezone.utc)
+        reply = self._reply_for(client_address)
         position_seconds = rest[0] if rest else None
         private_cue = not visible
         try:
@@ -169,82 +188,87 @@ class OSCApp:
                     self.client, encoder_id, position_seconds, name, private_cue=private_cue
                 )
         except Exception as exc:
-            self._error(encoder_id, str(exc))
+            self._error(reply, encoder_id, str(exc))
             return
         if cue is None:
-            self._error(encoder_id, 'cue created but could not be read back to confirm')
+            self._error(reply, encoder_id, 'cue created but could not be read back to confirm')
             return
-        self.reply.send_message(
+        reply.send_message(
             '/resi/cue/created',
             [encoder_id, cue.get('uuid') or '', position_to_seconds(cue['position']), name],
         )
 
-    def _on_update(self, address, encoder_id, cue_id, position_seconds, name):
+    def _on_update(self, client_address, address, encoder_id, cue_id, position_seconds, name):
+        reply = self._reply_for(client_address)
         try:
             position = cues.update_cue(self.client, encoder_id, cue_id, position_seconds, name)
         except Exception as exc:
-            self._error(encoder_id, str(exc))
+            self._error(reply, encoder_id, str(exc))
             return
-        self.reply.send_message('/resi/cue/updated', [encoder_id, cue_id, position, name])
+        reply.send_message('/resi/cue/updated', [encoder_id, cue_id, position, name])
 
-    def _on_list_encoders(self, address):
+    def _on_list_encoders(self, client_address, address):
+        reply = self._reply_for(client_address)
         try:
             entries = encoders.list_encoders(self.client)
         except Exception as exc:
-            self._error('', str(exc))
+            self._error(reply, '', str(exc))
             return
         for encoder_id, name, live in entries:
-            self.reply.send_message(
+            reply.send_message(
                 '/resi/encoder/entry', [encoder_id or '', name or '', live]
             )
-        self.reply.send_message('/resi/encoders/list/done', [len(entries)])
+        reply.send_message('/resi/encoders/list/done', [len(entries)])
 
-    def _on_list_events(self, address, encoder_id):
+    def _on_list_events(self, client_address, address, encoder_id):
+        reply = self._reply_for(client_address)
         try:
             entries = events.list_events(self.client, encoder_id)
         except Exception as exc:
-            self._error(encoder_id, str(exc))
+            self._error(reply, encoder_id, str(exc))
             return
         for event_id, name, start_time, active in entries:
-            self.reply.send_message(
+            reply.send_message(
                 '/resi/event/entry',
                 [encoder_id, event_id or '', name or '', start_time or '', active],
             )
-        self.reply.send_message('/resi/events/list/done', [encoder_id, len(entries)])
+        reply.send_message('/resi/events/list/done', [encoder_id, len(entries)])
 
-    def _on_current_event(self, address, encoder_id):
+    def _on_current_event(self, client_address, address, encoder_id):
+        reply = self._reply_for(client_address)
         try:
             current = events.current_event(self.client, encoder_id)
         except Exception as exc:
-            self._error(encoder_id, str(exc))
+            self._error(reply, encoder_id, str(exc))
             return
         if current is None:
-            self._error(encoder_id, f"encoder {encoder_id!r} isn't currently streaming")
+            self._error(reply, encoder_id, f"encoder {encoder_id!r} isn't currently streaming")
             return
         event_id, name, start_time = current
-        self.reply.send_message(
+        reply.send_message(
             '/resi/event/current', [encoder_id, event_id or '', name or '', start_time or '']
         )
 
-    def _on_recent_events(self, address, days):
+    def _on_recent_events(self, client_address, address, days):
+        reply = self._reply_for(client_address)
         try:
             grouped = events.recent_events(self.client, days)
         except Exception as exc:
-            self._error('', str(exc))
+            self._error(reply, '', str(exc))
             return
         total = 0
         for encoder_id, entries in grouped.items():
             for event_id, name, start_time in entries:
-                self.reply.send_message(
+                reply.send_message(
                     '/resi/recent_event/entry',
                     [encoder_id or '', event_id or '', name or '', start_time or ''],
                 )
                 total += 1
-        self.reply.send_message('/resi/events/recent/done', [days, total])
+        reply.send_message('/resi/events/recent/done', [days, total])
 
     def _on_unmatched(self, address, *args):
         log.warning('unhandled OSC address %s %r', address, args)
 
-    def _error(self, encoder_id, message):
+    def _error(self, reply, encoder_id, message):
         log.error('%s: %s', encoder_id, message)
-        self.reply.send_message('/resi/cue/error', [encoder_id, message])
+        reply.send_message('/resi/cue/error', [encoder_id, message])
