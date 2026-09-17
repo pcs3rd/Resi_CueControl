@@ -1,4 +1,5 @@
 # Resi_CueControl
+They wouldn't add this feature, so Claude and I did.  
 
 OSC-driven cue control for Resi Central events (`studio.resi.io`), built on
 [pyResi](https://github.com/pcs3rd/pyResi).
