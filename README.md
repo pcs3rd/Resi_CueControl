@@ -156,10 +156,18 @@ to a commit on `pcs3rd/pyResi`), `requests`, and `python-osc`, and lands on
 
 ```bash
 RESI_USERNAME=you@yourchurch.org RESI_PASSWORD=... \
-OSC_LISTEN_PORT=9000 OSC_REPLY_HOST=127.0.0.1 OSC_REPLY_PORT=9001 \
+OSC_LISTEN_PORT=9000 OSC_REPLY_PORT=9001 HTTP_LISTEN_PORT=8080 \
 resi-cuecontrol
 # or: RESI_TOKEN=... resi-cuecontrol
 ```
+
+This starts both interfaces at once: the OSC server (see "What it does"
+above) and, unless disabled, an HTTP REST server (see "HTTP REST API"
+below) offering the same operations as plain JSON — useful for callers
+like Bitfocus Companion's HTTP Request action, where OSC's untyped,
+space-delimited "multiple arguments" field has no way to protect a string
+containing spaces and silently mis-types a string that happens to start
+with digits (like a UUID) as a truncated number.
 
 Environment variables, all optional except the Resi credentials:
 
@@ -171,6 +179,16 @@ Environment variables, all optional except the Resi credentials:
   single fixed local port for both send and receive — if your sender uses
   a different (e.g. ephemeral) port to send from than the one it listens
   on, replies won't reach it.
+- `HTTP_ENABLED` (default `true`) — set to `false` to run the OSC server
+  only, with no HTTP interface at all.
+- `HTTP_LISTEN_HOST` (default `0.0.0.0`), `HTTP_LISTEN_PORT` (default
+  `8080`) — see "HTTP REST API" below for the routes this serves.
+- `HTTP_API_KEY` (unset by default) — when set, every HTTP request must
+  carry a matching `X-API-Key` header or get 401 Unauthorized. **Leaving
+  this unset means the HTTP API takes requests from anyone who can reach
+  the port, with no authentication at all** — the server logs a warning
+  at startup if so. Set this to a long random string for anything beyond
+  a trusted, closed network.
 - `LOG_LEVEL` (default `INFO`)
 - `CORRECT_FOR_DELAY` (default `false`) — turns on delay-corrected
   `/resi/cue/create` (subtracting encode + decoder buffer lag) for a
@@ -188,6 +206,54 @@ Environment variables, all optional except the Resi credentials:
   (e.g. "it's landing half a second late") once everything else is
   already calibrated — not a measurement, just a fine-tuning knob.
 
+## HTTP REST API
+
+Plain JSON over HTTP, covering the same operations as the OSC commands
+above, for anything that finds OSC's untyped, space-delimited argument
+field awkward — Bitfocus Companion's own "HTTP Request" action in
+particular, which lets you build a real JSON body instead of hand-encoding
+values into a single text field.
+
+| Method | Path                        | Body / query                        | Response |
+|---|---|---|---|
+| GET  | `/encoders`                       | —                              | `[{"encoder_id", "name", "live"}, ...]` |
+| GET  | `/encoders/<encoder_id>/events`   | —                              | `[{"event_id", "name", "start_time", "active"}, ...]` |
+| GET  | `/encoders/<encoder_id>/current`  | —                              | `{"event_id", "name", "start_time"}`, or 409 if not live |
+| GET  | `/events/recent?days=<days>`      | —                              | `{"<encoder_id>": [{"event_id", "name", "start_time"}, ...], ...}` |
+| GET  | `/encoders/<encoder_id>/cues`     | —                              | `[{"cue_id", "position_seconds", "name"}, ...]` |
+| GET  | `/events/<event_id>/cues`         | —                              | same shape, by event id directly |
+| POST | `/cues`                           | `{"encoder_id", "name", "visible", "position_seconds"?}` | `{"cue_id", "position_seconds", "name"}` |
+| PATCH| `/cues/<cue_id>`                  | `{"encoder_id", "position_seconds", "name"}` | `{"cue_id", "position_seconds", "name"}` |
+
+`POST /cues`'s `position_seconds` is optional, with the same
+auto-time-vs-explicit-position behavior as `/resi/cue/create` over OSC
+(see "Why cue creation doesn't correct for delay" above): omit it to place
+the cue at the moment the request arrived (delay-corrected per the usual
+`CORRECT_FOR_DELAY`/`CUE_OFFSET_SECONDS` rules), include it for an exact
+timeline position instead. `visible` maps to Resi's own `privateCue`
+field, inverted, same as the OSC side.
+
+Every error response is JSON — `{"error": "<message>"}` — with a 4xx/5xx
+status rather than a 200, so callers can branch on status code without
+parsing the body. An encoder that exists but isn't currently live comes
+back as 409 Conflict, not 404.
+
+If `HTTP_API_KEY` is set, every request needs an `X-API-Key` header
+matching it, or it gets 401 Unauthorized before reaching any route.
+
+Quick test (add `-H "X-API-Key: ..."` to both if `HTTP_API_KEY` is set):
+
+```bash
+curl http://localhost:8080/encoders
+
+curl -X POST http://localhost:8080/cues \
+  -H 'Content-Type: application/json' \
+  -d '{"encoder_id": "<encoder_id>", "name": "Stream Start test", "visible": false, "position_seconds": 5}'
+```
+
+In Companion's "HTTP Request" action, add a custom header named
+`X-API-Key` with the same value as `HTTP_API_KEY` alongside the JSON body.
+
 ## Running in Docker
 
 ```bash
@@ -195,24 +261,21 @@ docker build -t resi-cuecontrol .
 
 docker run --rm \
   -e RESI_USERNAME=you@yourchurch.org -e RESI_PASSWORD=... \
-  -e OSC_REPLY_HOST=192.168.1.50 \
-  -p 9000:9000/udp -p 9001:9001/udp \
+  -e HTTP_API_KEY=... \
+  -p 9000:9000/udp -p 9001:9001/udp -p 8080:8080 \
   resi-cuecontrol
 # or: -e RESI_TOKEN=...
 ```
 
 Same environment variables as above, passed with `-e` (or `--env-file`
-for a `.env` of them). Both OSC ports are UDP — `-p HOST:CONTAINER/udp`
-for each, matching whatever `OSC_LISTEN_PORT`/`OSC_REPLY_PORT` you set
-(defaults 9000/9001 if you don't set them).
-
-One thing that trips people up with any containerized OSC/UDP service:
-`OSC_REPLY_HOST`'s default (`127.0.0.1`) means *inside the container* —
-useless once this is containerized, since replies would just loop back to
-itself instead of reaching ProPresenter/Companion/whatever sent the
-command. Set it explicitly to that machine's real address (or
-`host.docker.internal` if it's running on the same Docker host and your
-Docker version resolves that) rather than relying on the default.
+for a `.env` of them). The two OSC ports are UDP and need the `/udp`
+suffix explicitly — `-p HOST:CONTAINER/udp` for each, matching whatever
+`OSC_LISTEN_PORT`/`OSC_REPLY_PORT` you set (defaults 9000/9001). The HTTP
+port is plain TCP, so it's just `-p HOST:CONTAINER` with no suffix
+(default 8080 via `HTTP_LISTEN_PORT`). **A `-p` without
+`/udp` publishes TCP only** — a very easy thing to get bitten by if you
+copy the OSC lines' syntax for the HTTP port too and forget it doesn't
+need (or want) `/udp`.
 
 The image is a two-stage build (`Dockerfile`): the builder stage needs
 `git` to resolve the `pyresi` git dependency from `uv.lock` and isn't
